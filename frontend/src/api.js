@@ -1,0 +1,118 @@
+const API_URL = `http://${window.location.hostname}:8000`;
+
+async function handleResponse(res) {
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export const fetchUsers = () =>
+  fetch(`${API_URL}/users/`).then(handleResponse).catch(() => []);
+
+export const fetchUserGroups = (userId) =>
+  fetch(`${API_URL}/users/${userId}/groups/`).then(handleResponse).catch(() => []);
+
+export const fetchUserExpenses = (userId) =>
+  fetch(`${API_URL}/users/${userId}/expenses/`).then(handleResponse).catch(() => []);
+
+export const fetchGroupExpenses = (groupId) =>
+  fetch(`${API_URL}/groups/${groupId}/expenses/`).then(handleResponse).catch(() => []);
+
+export const fetchGroupBalances = (groupId) =>
+  fetch(`${API_URL}/groups/${groupId}/balances/`).then(handleResponse).catch(() => []);
+
+export const registerUser = (name, email, password) =>
+  fetch(`${API_URL}/register/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  }).then(handleResponse);
+
+export const loginUser = (email, password) =>
+  fetch(`${API_URL}/login/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  }).then(handleResponse);
+
+export const createGroup = (name, creator_id) =>
+  fetch(`${API_URL}/groups/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, creator_id }),
+  }).then(handleResponse);
+
+export const addGroupMember = (groupId, email) =>
+  fetch(`${API_URL}/groups/${groupId}/members/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  }).then(handleResponse);
+
+export const createExpense = (expenseData) =>
+  fetch(`${API_URL}/expenses/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(expenseData),
+  }).then(handleResponse);
+
+export const sendInvite = (email, phone, groupId, invitedById) =>
+  fetch(`${API_URL}/invite/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, phone: phone || null, group_id: groupId, invited_by_id: invitedById }),
+  }).then(handleResponse);
+
+export const updateUser = (userId, name) =>
+  fetch(`${API_URL}/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }).then(handleResponse);
+
+export const updateExpense = (expenseId, expenseData) =>
+  fetch(`${API_URL}/expenses/${expenseId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(expenseData),
+  }).then(handleResponse);
+
+export const deleteExpense = (expenseId, requesterId) =>
+  fetch(`${API_URL}/expenses/${expenseId}?requester_id=${requesterId}`, {
+    method: 'DELETE',
+  }).then(handleResponse);
+
+export const approveExpenseDeletion = (expenseId, userId) =>
+  fetch(`${API_URL}/expenses/${expenseId}/approve_deletion?user_id=${userId}`, {
+    method: 'POST',
+  }).then(handleResponse);
+
+export const rejectExpenseDeletion = (expenseId, userId) =>
+  fetch(`${API_URL}/expenses/${expenseId}/reject_deletion?user_id=${userId}`, {
+    method: 'POST',
+  }).then(handleResponse);
+
+export const fetchExpenseChat = (expenseId) =>
+  fetch(`${API_URL}/expenses/${expenseId}/chat`).then(handleResponse).catch(() => []);
+
+export const postExpenseMessage = (expenseId, userId, text, mentions = []) =>
+  fetch(`${API_URL}/expenses/${expenseId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, text, mentions }),
+  }).then(handleResponse);
+
+export const cancelExpenseDeletion = (expenseId, userId) =>
+  fetch(`${API_URL}/expenses/${expenseId}/cancel_deletion?user_id=${userId}`, {
+    method: 'POST',
+  }).then(handleResponse);
+
+export const fetchNotifications = (userId) =>
+  fetch(`${API_URL}/users/${userId}/notifications`).then(handleResponse).catch(() => []);
+
+export const markNotificationRead = (notifId) =>
+  fetch(`${API_URL}/notifications/${notifId}/mark_read`, {
+    method: 'POST',
+  }).then(handleResponse);
