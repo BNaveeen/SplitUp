@@ -1,5 +1,5 @@
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.startsWith('192.') || window.location.hostname.startsWith('172.');
-const API_URL = isLocal ? `http://${window.location.hostname}:8000` : 'https://splitup-qttj.onrender.com';
+const API_URL = isLocal ? '/api' : 'https://splitup-qttj.onrender.com';
 
 async function handleResponse(res) {
   if (!res.ok) {
@@ -163,6 +163,6 @@ export const adminCreateUser = (adminId, name, email, password, isAdminFlag) =>
 // WebSocket URL helper
 export const getWsUrl = (userId) => {
   const wsProtocol = isLocal ? 'ws' : 'wss';
-  const wsHost = isLocal ? `${window.location.hostname}:8000` : 'splitup-qttj.onrender.com';
+  const wsHost = isLocal ? `${window.location.hostname}:8001` : 'splitup-qttj.onrender.com';
   return `${wsProtocol}://${wsHost}/ws/${userId}`;
 };

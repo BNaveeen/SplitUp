@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+// CACHE BUST FOR VITE FAST REFRESH
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Wallet, Users, LayoutGrid, LogOut, Loader2, CheckCircle2,
@@ -100,8 +101,7 @@ export default function App() {
     if (!saved) return
     const parsed = JSON.parse(saved)
     // Always re-fetch from server so is_admin and other fields are fresh
-    fetch(`http://${window.location.hostname}:8000/users/?current_user_id=${parsed.id}`)
-      .then(r => r.json())
+    fetchUsers(parsed.id)
       .then(users => {
         const freshUser = Array.isArray(users) && users.find(u => u.id === parsed.id && u.email === parsed.email)
         if (freshUser) {
