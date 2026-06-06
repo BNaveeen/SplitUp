@@ -552,6 +552,14 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     })
     .slice(0, 6) // max 6 suggestions
 
+  const markChatViewed = useCallback((expId) => {
+    setViewedChats(prev => {
+      const updated = { ...prev, [expId]: new Date().toISOString() }
+      localStorage.setItem(`split_chat_viewed_${currentUser.id}`, JSON.stringify(updated))
+      return updated
+    })
+  }, [currentUser.id])
+
   const loadGroupData = useCallback(async () => {
     setLoading(true)
     const [e, b] = await Promise.all([fetchGroupExpenses(group.id), fetchGroupBalances(group.id)])
@@ -585,8 +593,9 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
         const el = document.getElementById(`expense-${focusExpenseId}`)
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }, 300)
+      markChatViewed(focusExpenseId)
     }
-  }, [focusExpenseId, expenses])
+  }, [focusExpenseId, expenses, markChatViewed])
 
   const handleDeleteExpense = async (expenseId) => {
     if (confirm("Are you sure you want to delete this expense? This will require approval from everyone involved.")) {
@@ -884,6 +893,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               onRejectDelete={handleRejectDelete}
               viewedChats={viewedChats}
               focusExpenseId={focusExpenseId}
+              markChatViewed={markChatViewed}
             />
           </>
         ) : (
@@ -1145,7 +1155,7 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }
 }
 
 // ── Expense List (Splitwise-style) ────────────────────────────────────────────
-function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId }) {
+function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed }) {
   const [expandedChatId, setExpandedChatId] = useState(focusExpenseId || null)
 
   useEffect(() => {
@@ -1159,8 +1169,21 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
       setExpandedChatId(null)
     } else {
       setExpandedChatId(expId)
+      if (markChatViewed) markChatViewed(expId)
     }
   }
+
+  // Clear red dot instantly if receiving message while chat is open
+  useEffect(() => {
+    const handleWsMsg = (e) => {
+      const data = e.detail
+      if (data.expense_id === expandedChatId && markChatViewed) {
+        markChatViewed(expandedChatId)
+      }
+    }
+    window.addEventListener('ws_new_message', handleWsMsg)
+    return () => window.removeEventListener('ws_new_message', handleWsMsg)
+  }, [expandedChatId, markChatViewed])
 
   const handleCancelDeletion = async (expId) => {
     if (!window.confirm("Are you sure you want to cancel the deletion?")) return;
