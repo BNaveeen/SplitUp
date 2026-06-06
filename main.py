@@ -167,6 +167,27 @@ class ExpenseMessageResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class SettlementCreate(BaseModel):
+    payer_id: int
+    payee_id: int
+    amount: float
+    group_id: Optional[int] = None
+    expense_id: Optional[int] = None
+
+class SettlementResponse(BaseModel):
+    id: int
+    payer_id: int
+    payer_name: Optional[str] = None
+    payee_id: int
+    payee_name: Optional[str] = None
+    amount: float
+    group_id: Optional[int]
+    expense_id: Optional[int]
+    status: str
+    created_at: str
+    class Config:
+        from_attributes = True
+
 class BalanceEntry(BaseModel):
     from_user_id: int
     from_user_name: str
@@ -344,6 +365,48 @@ def get_user_groups(user_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user.groups
+@app.get("/users/{user_id}/all_balances")
+def get_user_all_balances(user_id: int, db: Session = Depends(get_db)):
+    """Get aggregated balances across all groups for a user."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    global_balances = {}
+    
+    for group in user.groups:
+        group_bals = get_group_balances(group.id, db)
+        for bal in group_bals:
+            if bal.from_user_id == user_id:
+                other_id = bal.to_user_id
+                other_name = bal.to_user_name
+                amount = -bal.amount
+            elif bal.to_user_id == user_id:
+                other_id = bal.from_user_id
+                other_name = bal.from_user_name
+                amount = bal.amount
+            else:
+                continue
+                
+            if other_id not in global_balances:
+                global_balances[other_id] = {
+                    "other_user_id": other_id,
+                    "other_user_name": other_name,
+                    "net_balance": 0.0,
+                    "group_balances": []
+                }
+            
+            global_balances[other_id]["net_balance"] += amount
+            global_balances[other_id]["group_balances"].append({
+                "group_id": group.id,
+                "group_name": group.name,
+                "amount": amount
+            })
+            
+    for bal in global_balances.values():
+        bal["net_balance"] = round(bal["net_balance"], 2)
+        
+    return list(global_balances.values())
 
 @app.get("/users/{user_id}/expenses/", response_model=List[ExpenseResponse])
 def get_user_expenses(user_id: int, db: Session = Depends(get_db)):
@@ -909,6 +972,116 @@ def accept_invite(token: str, user_id: int, db: Session = Depends(get_db)):
     invite.accepted = 1
     db.commit()
     return {"message": f"Welcome to {group.name}!", "group_id": group.id}
+
+# ── Settlements ───────────────────────────────────────────────────────────────
+
+@app.post("/settlements/", response_model=SettlementResponse)
+def create_settlement(req: SettlementCreate, db: Session = Depends(get_db)):
+    """Request a settlement (payment) from payer to payee."""
+    from database import Settlement
+    payer = db.query(User).filter(User.id == req.payer_id).first()
+    payee = db.query(User).filter(User.id == req.payee_id).first()
+    if not payer or not payee:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    new_settlement = Settlement(
+        payer_id=req.payer_id,
+        payee_id=req.payee_id,
+        amount=req.amount,
+        group_id=req.group_id,
+        expense_id=req.expense_id
+    )
+    db.add(new_settlement)
+    db.commit()
+    db.refresh(new_settlement)
+    
+    # Notify the payee
+    group_name = "a group"
+    if req.group_id:
+        group = db.query(Group).filter(Group.id == req.group_id).first()
+        if group: group_name = group.name
+        
+    _add_notification(db, req.payee_id, f"{payer.name} sent a payment of £{req.amount} in {group_name}. Please approve it.", group_id=req.group_id)
+    
+    res = SettlementResponse(
+        id=new_settlement.id,
+        payer_id=new_settlement.payer_id,
+        payer_name=payer.name,
+        payee_id=new_settlement.payee_id,
+        payee_name=payee.name,
+        amount=float(new_settlement.amount),
+        group_id=new_settlement.group_id,
+        expense_id=new_settlement.expense_id,
+        status=new_settlement.status,
+        created_at=new_settlement.created_at.isoformat()
+    )
+    return res
+
+@app.post("/settlements/{settlement_id}/approve")
+def approve_settlement(settlement_id: int, db: Session = Depends(get_db)):
+    from database import Settlement
+    settlement = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    if settlement.status != "pending":
+        raise HTTPException(status_code=400, detail="Settlement is not pending")
+        
+    settlement.status = "approved"
+    
+    # Create the offsetting Expense transaction
+    payment_expense = Expense(
+        description="Payment",
+        amount=settlement.amount,
+        group_id=settlement.group_id,
+        payer_id=settlement.payer_id,
+        created_by_id=settlement.payee_id,
+    )
+    db.add(payment_expense)
+    db.flush()
+    
+    # The payee receives the money (so they owe the payer back, clearing the debt)
+    split = ExpenseSplit(
+        expense_id=payment_expense.id,
+        user_id=settlement.payee_id,
+        amount=settlement.amount
+    )
+    db.add(split)
+    
+    _add_notification(db, settlement.payer_id, f"Your payment of £{settlement.amount} was approved by {settlement.payee.name}!")
+    db.commit()
+    return {"message": "Settlement approved and transaction created."}
+
+@app.post("/settlements/{settlement_id}/reject")
+def reject_settlement(settlement_id: int, db: Session = Depends(get_db)):
+    from database import Settlement
+    settlement = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    
+    settlement.status = "rejected"
+    _add_notification(db, settlement.payer_id, f"Your payment of £{settlement.amount} was rejected by {settlement.payee.name}.")
+    db.commit()
+    return {"message": "Settlement rejected."}
+
+@app.get("/users/{user_id}/pending_settlements", response_model=List[SettlementResponse])
+def get_pending_settlements(user_id: int, db: Session = Depends(get_db)):
+    from database import Settlement
+    settlements = db.query(Settlement).filter(Settlement.payee_id == user_id, Settlement.status == "pending").all()
+    res = []
+    for s in settlements:
+        res.append(SettlementResponse(
+            id=s.id,
+            payer_id=s.payer_id,
+            payer_name=s.payer.name if s.payer else "?",
+            payee_id=s.payee_id,
+            payee_name=s.payee.name if s.payee else "?",
+            amount=float(s.amount),
+            group_id=s.group_id,
+            expense_id=s.expense_id,
+            status=s.status,
+            created_at=s.created_at.isoformat()
+        ))
+    return res
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 

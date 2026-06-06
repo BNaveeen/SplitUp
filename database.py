@@ -132,6 +132,23 @@ class ExpenseMessage(Base):
     expense = relationship("Expense", back_populates="messages")
     user = relationship("User")
 
+class Settlement(Base):
+    __tablename__ = "settlements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    payer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    payee_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    amount = Column(Numeric(10, 2))
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), nullable=True, index=True)
+    expense_id = Column(Integer, ForeignKey("expenses.id", ondelete="CASCADE"), nullable=True, index=True)
+    status = Column(String, default="pending", index=True) # pending, approved, rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    payer = relationship("User", foreign_keys=[payer_id])
+    payee = relationship("User", foreign_keys=[payee_id])
+    group = relationship("Group")
+    expense = relationship("Expense")
+
 class Notification(Base):
     __tablename__ = "notifications"
 
