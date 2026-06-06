@@ -1083,6 +1083,26 @@ def get_pending_settlements(user_id: int, db: Session = Depends(get_db)):
         ))
     return res
 
+@app.get("/users/{user_id}/initiated_settlements", response_model=List[SettlementResponse])
+def get_initiated_settlements(user_id: int, db: Session = Depends(get_db)):
+    from database import Settlement
+    settlements = db.query(Settlement).filter(Settlement.payer_id == user_id, Settlement.status == "pending").all()
+    res = []
+    for s in settlements:
+        res.append(SettlementResponse(
+            id=s.id,
+            payer_id=s.payer_id,
+            payer_name=s.payer.name if s.payer else "?",
+            payee_id=s.payee_id,
+            payee_name=s.payee.name if s.payee else "?",
+            amount=float(s.amount),
+            group_id=s.group_id,
+            expense_id=s.expense_id,
+            status=s.status,
+            created_at=s.created_at.isoformat()
+        ))
+    return res
+
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _add_notification(db: Session, user_id: int, message: str, expense_id: int = None, group_id: int = None):
