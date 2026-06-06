@@ -287,6 +287,8 @@ def get_notifications(user_id: int, db: Session = Depends(get_db)):
             "id": n.id,
             "user_id": n.user_id,
             "message": n.message,
+            "group_id": n.group_id,
+            "expense_id": n.expense_id,
             "is_read": n.is_read,
             "created_at": n.created_at.isoformat()
         } for n in notifs
@@ -502,7 +504,7 @@ def split_expense(expense: ExpenseCreate, db: Session = Depends(get_db)):
     involved_users.add(expense.payer_id)
     for uid in involved_users:
         if uid != expense.created_by_id:
-            _add_notification(db, uid, f"You were added to a new expense: {new_expense.description}")
+            _add_notification(db, uid, f"You were added to a new expense: {new_expense.description}", expense_id=new_expense.id, group_id=new_expense.group_id)
     db.commit()
 
     return _format_expense(new_expense)
@@ -544,7 +546,7 @@ def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session =
     involved_users.add(expense.payer_id)
     for uid in involved_users:
         if uid != expense_update.created_by_id: # using created_by_id as the editor
-            _add_notification(db, uid, f"Expense updated: {expense.description}")
+            _add_notification(db, uid, f"Expense updated: {expense.description}", expense_id=expense.id, group_id=expense.group_id)
     db.commit()
 
     return _format_expense(expense)
@@ -579,7 +581,7 @@ def delete_expense(expense_id: int, requester_id: int, db: Session = Depends(get
         approval = ExpenseDeletionApproval(expense_id=expense.id, user_id=uid, approved=1 if uid == requester_id else 0)
         db.add(approval)
         if uid != requester_id:
-            _add_notification(db, uid, f"Deletion requested for expense: {expense.description}")
+            _add_notification(db, uid, f"Deletion requested for expense: {expense.description}", expense_id=expense.id, group_id=expense.group_id)
             
     _add_system_message(db, expense.id, requester_id, "Requested deletion of this expense.")
     
@@ -731,9 +733,9 @@ async def post_expense_chat(expense_id: int, msg: ExpenseMessageCreate, db: Sess
         for uid in involved_users:
             if uid != msg.user_id:
                 if uid in mentioned_users:
-                    _add_notification(db, uid, f"{new_msg.user.name} mentioned you in {expense.description}: {msg.text}")
+                    _add_notification(db, uid, f"{new_msg.user.name} mentioned you in {expense.description}: {msg.text}", expense_id=expense.id, group_id=expense.group_id)
                 else:
-                    _add_notification(db, uid, f"New comment on {expense.description}: {msg.text}")
+                    _add_notification(db, uid, f"New comment on {expense.description}: {msg.text}", expense_id=expense.id, group_id=expense.group_id)
         db.commit()
 
     msg_payload = {
@@ -876,9 +878,9 @@ def accept_invite(token: str, user_id: int, db: Session = Depends(get_db)):
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
-def _add_notification(db: Session, user_id: int, message: str):
+def _add_notification(db: Session, user_id: int, message: str, expense_id: int = None, group_id: int = None):
     from database import Notification
-    n = Notification(user_id=user_id, message=message)
+    n = Notification(user_id=user_id, message=message, expense_id=expense_id, group_id=group_id)
     db.add(n)
     db.flush()  # get ID without full commit
     # Schedule non-blocking WS push (runs after current DB transaction commits)
@@ -887,6 +889,8 @@ def _add_notification(db: Session, user_id: int, message: str):
             "type": "notification",
             "id": n.id,
             "message": message,
+            "group_id": group_id,
+            "expense_id": expense_id,
             "is_read": 0,
             "created_at": datetime.utcnow().isoformat()
         })

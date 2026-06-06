@@ -126,6 +126,8 @@ class Notification(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     message = Column(String)
+    group_id = Column(Integer, nullable=True)
+    expense_id = Column(Integer, nullable=True)
     is_read = Column(Integer, default=0) # 0=unread, 1=read
     created_at = Column(DateTime, default=datetime.utcnow)
 
