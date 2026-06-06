@@ -191,6 +191,7 @@ function Dashboard({ user, onLogout }) {
   const [showProfile, setShowProfile] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [showNotifs, setShowNotifs] = useState(false)
+  const [toastNotif, setToastNotif] = useState(null)
   const [showAdmin, setShowAdmin] = useState(false)
   const wsRef = useRef(null)
 
@@ -210,6 +211,8 @@ function Dashboard({ user, onLogout }) {
           const data = JSON.parse(evt.data)
           if (data.type === 'notification') {
             setNotifications(prev => [data, ...prev])
+            setToastNotif(data)
+            setTimeout(() => setToastNotif(null), 5000)
           } else if (data.type === 'new_message') {
             window.dispatchEvent(new CustomEvent('ws_new_message', { detail: data }))
           }
@@ -396,6 +399,18 @@ function Dashboard({ user, onLogout }) {
           </AnimatePresence>
         )}
       </main>
+
+      {/* Floating Toast Notification */}
+      <AnimatePresence>
+        {toastNotif && (
+          <motion.div initial={{ opacity: 0, y: -50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -50 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] bg-indigo-600/90 backdrop-blur-md border border-indigo-500/50 text-white px-4 py-3 rounded-2xl shadow-xl shadow-indigo-500/30 flex items-center gap-3 cursor-pointer max-w-[90vw] w-max"
+            onClick={() => { handleMarkRead(toastNotif.id, toastNotif); setToastNotif(null); }}>
+            <Bell className="h-5 w-5 shrink-0" />
+            <div className="text-sm font-medium pr-2 truncate">{toastNotif.message}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-xl border-t border-slate-700/40">
@@ -596,6 +611,20 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
       markChatViewed(focusExpenseId)
     }
   }, [focusExpenseId, expenses, markChatViewed])
+
+  // Update last_message_at instantly when a new message arrives over WS
+  useEffect(() => {
+    const handleWsMsg = (e) => {
+      const data = e.detail
+      setExpenses(prev => prev.map(exp => 
+        exp.id === data.expense_id 
+          ? { ...exp, last_message_at: data.created_at || new Date().toISOString() } 
+          : exp
+      ))
+    }
+    window.addEventListener('ws_new_message', handleWsMsg)
+    return () => window.removeEventListener('ws_new_message', handleWsMsg)
+  }, [])
 
   const handleDeleteExpense = async (expenseId) => {
     if (confirm("Are you sure you want to delete this expense? This will require approval from everyone involved.")) {
