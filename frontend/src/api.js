@@ -24,6 +24,9 @@ export const fetchGroupExpenses = (groupId) =>
 export const fetchGroupBalances = (groupId) =>
   fetch(`${API_URL}/groups/${groupId}/balances/`).then(handleResponse).catch(() => []);
 
+export const fetchAllUserBalances = (userId) =>
+  fetch(`${API_URL}/users/${userId}/all_balances`).then(handleResponse).catch(() => []);
+
 export const registerUser = (name, email, password) =>
   fetch(`${API_URL}/register/`, {
     method: 'POST',

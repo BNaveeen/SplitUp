@@ -11,7 +11,8 @@ import {
   registerUser, loginUser, createGroup, addGroupMember, createExpense, sendInvite,
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
-  fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser
+  fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
+  fetchAllUserBalances
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -193,6 +194,7 @@ function Dashboard({ user, onLogout }) {
   const [showNotifs, setShowNotifs] = useState(false)
   const [toastNotif, setToastNotif] = useState(null)
   const [showAdmin, setShowAdmin] = useState(false)
+  const [globalBalances, setGlobalBalances] = useState([])
   const wsRef = useRef(null)
 
   // WebSocket: real-time push for notifications and new chat messages
@@ -226,10 +228,16 @@ function Dashboard({ user, onLogout }) {
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const [g, u, n] = await Promise.all([fetchUserGroups(user.id), fetchUsers(user.id), fetchNotifications(user.id)])
+    const [g, u, n, b] = await Promise.all([
+      fetchUserGroups(user.id), 
+      fetchUsers(user.id), 
+      fetchNotifications(user.id),
+      fetchAllUserBalances(user.id)
+    ])
     setGroups(g)
     setUsers(u)
     setNotifications(n)
+    setGlobalBalances(b)
     setLoading(false)
   }, [user.id])
 
@@ -392,7 +400,7 @@ function Dashboard({ user, onLogout }) {
               )}
 
               {activeTab === 'people' && (
-                <PeopleTab users={users} currentUser={user} groups={groups} />
+                <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} />
               )}
 
             </motion.div>
@@ -1503,7 +1511,8 @@ function ActivityTab({ currentUser, groups }) {
 }
 
 // ── People Tab ────────────────────────────────────────────────────────────────
-function PeopleTab({ users, currentUser, groups = [] }) {
+function PeopleTab({ users, currentUser, groups = [], globalBalances = [] }) {
+  const [selectedBalance, setSelectedBalance] = useState(null)
   const visibleUsers = currentUser?.is_admin ? users : users.filter(u => {
     if (u.id === currentUser.id) return true
     return groups.some(g => g.members?.some(m => m.id === u.id))
@@ -1513,18 +1522,83 @@ function PeopleTab({ users, currentUser, groups = [] }) {
     <div className="pt-6 space-y-2">
       <h2 className="text-xl font-bold text-white mb-4">People</h2>
       {visibleUsers.length === 0 && <p className="text-slate-500 text-sm">No people to show yet. Join a group!</p>}
-      {visibleUsers.map((u, i) => (
-        <motion.div key={u.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
-          className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-2xl px-4 py-3">
-          <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
-            {u.name.charAt(0).toUpperCase()}
+      {visibleUsers.map((u, i) => {
+        const balObj = globalBalances.find(b => b.other_user_id === u.id)
+        const netBalance = balObj ? balObj.net_balance : 0
+        const isCleared = netBalance === 0
+
+        return (
+          <motion.div key={u.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+            className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-2xl px-4 py-3">
+            <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
+              {u.name.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-slate-100">{u.name} {u.id === currentUser.id && <span className="text-indigo-400 text-xs">(You)</span>}</p>
+              <p className="text-xs text-slate-500">{u.email}</p>
+            </div>
+            {u.id !== currentUser.id && (
+              <button 
+                onClick={() => !isCleared && setSelectedBalance(balObj)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold tracking-wide transition-colors ${
+                  isCleared ? 'bg-slate-700/50 text-slate-400 cursor-default' : 
+                  netBalance > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 
+                  'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
+                }`}
+              >
+                {isCleared ? 'Cleared' : netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` : `You owe £${Math.abs(netBalance).toFixed(2)}`}
+              </button>
+            )}
+          </motion.div>
+        )
+      })}
+      
+      <AnimatePresence>
+        {selectedBalance && (
+          <BalanceBreakdownModal 
+            balanceObj={selectedBalance} 
+            onClose={() => setSelectedBalance(null)} 
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ── Balance Breakdown Modal ───────────────────────────────────────────────────
+function BalanceBreakdownModal({ balanceObj, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative w-full max-w-sm bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+        <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-800/30">
+          <h2 className="text-lg font-bold text-white">Balance with {balanceObj.other_user_name}</h2>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-full transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5 overflow-y-auto custom-scrollbar">
+          <div className="flex flex-col items-center justify-center p-4 mb-6 bg-slate-800/50 rounded-2xl border border-slate-700/50">
+            <p className="text-sm text-slate-400 mb-1">Total Net Balance</p>
+            <p className={`text-2xl font-bold ${balanceObj.net_balance > 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+              {balanceObj.net_balance > 0 ? 'Owes you' : 'You owe'} £{Math.abs(balanceObj.net_balance).toFixed(2)}
+            </p>
           </div>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-slate-100">{u.name} {u.id === currentUser.id && <span className="text-indigo-400 text-xs">(You)</span>}</p>
-            <p className="text-xs text-slate-500">{u.email}</p>
+          
+          <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3 px-1">Group Breakdown</h3>
+          <div className="space-y-2">
+            {balanceObj.group_balances.map(gb => (
+              <div key={gb.group_id} className="flex items-center justify-between p-3 bg-slate-800 rounded-xl border border-slate-700/50">
+                <span className="text-sm font-medium text-slate-200">{gb.group_name}</span>
+                <span className={`text-sm font-bold ${gb.amount > 0 ? 'text-emerald-400' : gb.amount < 0 ? 'text-orange-400' : 'text-slate-400'}`}>
+                  {gb.amount > 0 ? '+' : ''}{gb.amount.toFixed(2)}
+                </span>
+              </div>
+            ))}
           </div>
-        </motion.div>
-      ))}
+        </div>
+      </motion.div>
     </div>
   )
 }
