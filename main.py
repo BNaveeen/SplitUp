@@ -1,16 +1,44 @@
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pydantic import BaseModel
 from datetime import datetime
 import asyncio
 import secrets
 import os
+import json
 
 from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, PendingInvite, Base
 
 app = FastAPI(title="Splitwise Clone API")
+
+# ── WebSocket Connection Manager ──────────────────────────────────────────────
+class ConnectionManager:
+    def __init__(self):
+        self.active: Dict[int, List[WebSocket]] = {}  # user_id -> list of websockets
+
+    async def connect(self, user_id: int, websocket: WebSocket):
+        await websocket.accept()
+        self.active.setdefault(user_id, []).append(websocket)
+
+    def disconnect(self, user_id: int, websocket: WebSocket):
+        conns = self.active.get(user_id, [])
+        if websocket in conns:
+            conns.remove(websocket)
+
+    async def send_to_user(self, user_id: int, data: dict):
+        for ws in list(self.active.get(user_id, [])):
+            try:
+                await ws.send_text(json.dumps(data))
+            except Exception:
+                pass
+
+    async def broadcast_to_users(self, user_ids: List[int], data: dict):
+        for uid in user_ids:
+            await self.send_to_user(uid, data)
+
+manager = ConnectionManager()
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +71,7 @@ class UserResponse(BaseModel):
     id: int
     name: str
     email: str
+    is_admin: bool = False
     class Config:
         from_attributes = True
 
@@ -165,12 +194,78 @@ def login_user(user: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return db_user
 
-# ── User Routes ───────────────────────────────────────────────────────────────
+# ── User Routes ───────────────────────────────────────────────────────────
 
 @app.get("/users/", response_model=List[UserResponse])
-def get_users(db: Session = Depends(get_db)):
-    """Get all users."""
+def get_users(current_user_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Return connected users only (shared group or transaction). Falls back to all users if no ID given."""
+    if not current_user_id:
+        return db.query(User).all()
+
+    connected = set([current_user_id])
+    user = db.query(User).filter(User.id == current_user_id).first()
+    if user:
+        for g in user.groups:
+            for m in g.members:
+                connected.add(m.id)
+
+    from database import ExpenseSplit as ES, Expense as Exp
+    paid_ids = [r[0] for r in db.query(Exp.id).filter(Exp.payer_id == current_user_id).all()]
+    split_ids = [r[0] for r in db.query(ES.expense_id).filter(ES.user_id == current_user_id).all()]
+    all_exp_ids = list(set(paid_ids + split_ids))
+    if all_exp_ids:
+        connected.update([r[0] for r in db.query(Exp.payer_id).filter(Exp.id.in_(all_exp_ids)).all()])
+        connected.update([r[0] for r in db.query(ES.user_id).filter(ES.expense_id.in_(all_exp_ids)).all()])
+
+    return db.query(User).filter(User.id.in_(connected)).all()
+
+# ── Admin Routes ───────────────────────────────────────────────────────────
+
+@app.get("/admin/users", response_model=List[UserResponse])
+def admin_get_users(admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
     return db.query(User).all()
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: int, admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    if user_id == admin_id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db.delete(user)
+    db.commit()
+    return {"message": "User deleted"}
+
+@app.delete("/admin/groups/{group_id}")
+def admin_delete_group(group_id: int, admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    from database import Group as G
+    group = db.query(G).filter(G.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    db.delete(group)
+    db.commit()
+    return {"message": "Group deleted"}
+
+# ── WebSocket Endpoint ──────────────────────────────────────────────────────────
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    await manager.connect(user_id, websocket)
+    try:
+        while True:
+            # Keep connection alive; server pushes data proactively
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id, websocket)
 
 @app.put("/users/{user_id}", response_model=UserResponse)
 def update_user(user_id: int, update_data: UserUpdate, db: Session = Depends(get_db)):
@@ -618,8 +713,8 @@ def get_expense_chat(expense_id: int, db: Session = Depends(get_db)):
     ]
 
 @app.post("/expenses/{expense_id}/chat", response_model=ExpenseMessageResponse)
-def post_expense_chat(expense_id: int, msg: ExpenseMessageCreate, db: Session = Depends(get_db)):
-    """Post a chat message to an expense."""
+async def post_expense_chat(expense_id: int, msg: ExpenseMessageCreate, db: Session = Depends(get_db)):
+    """Post a chat message to an expense and push via WebSocket."""
     from database import ExpenseMessage
     new_msg = ExpenseMessage(expense_id=expense_id, user_id=msg.user_id, text=msg.text, is_system=0)
     db.add(new_msg)
@@ -627,13 +722,12 @@ def post_expense_chat(expense_id: int, msg: ExpenseMessageCreate, db: Session = 
     db.refresh(new_msg)
     
     expense = db.query(Expense).filter(Expense.id == expense_id).first()
+    mentioned_users = set(msg.mentions) if getattr(msg, "mentions", None) else set()
+    involved_users = set()
     if expense:
         involved_users = {s.user_id for s in expense.splits}
         involved_users.add(expense.payer_id)
-        
-        # Notify mentioned users first
-        mentioned_users = set(msg.mentions) if getattr(msg, "mentions", None) else set()
-        
+
         for uid in involved_users:
             if uid != msg.user_id:
                 if uid in mentioned_users:
@@ -641,6 +735,19 @@ def post_expense_chat(expense_id: int, msg: ExpenseMessageCreate, db: Session = 
                 else:
                     _add_notification(db, uid, f"New comment on {expense.description}: {msg.text}")
         db.commit()
+
+    msg_payload = {
+        "type": "new_message",
+        "expense_id": expense_id,
+        "id": new_msg.id,
+        "user_id": new_msg.user_id,
+        "user_name": new_msg.user.name if new_msg.user else "Unknown",
+        "text": new_msg.text,
+        "is_system": 0,
+        "created_at": new_msg.created_at.isoformat()
+    }
+    # Push message instantly to all participants via WebSocket
+    await manager.broadcast_to_users(list(involved_users), msg_payload)
         
     return {
         "id": new_msg.id,
@@ -773,6 +880,23 @@ def _add_notification(db: Session, user_id: int, message: str):
     from database import Notification
     n = Notification(user_id=user_id, message=message)
     db.add(n)
+    db.flush()  # get ID without full commit
+    # Schedule non-blocking WS push (runs after current DB transaction commits)
+    async def _push():
+        await manager.send_to_user(user_id, {
+            "type": "notification",
+            "id": n.id,
+            "message": message,
+            "is_read": 0,
+            "created_at": datetime.utcnow().isoformat()
+        })
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_push())
+    except Exception:
+        pass
 
 def _add_system_message(db: Session, expense_id: int, user_id: int, text: str):
     from database import ExpenseMessage

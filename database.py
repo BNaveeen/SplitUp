@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Numeric, ForeignKey, Table, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Numeric, ForeignKey, Table, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 
@@ -35,6 +35,7 @@ class User(Base):
     name = Column(String, index=True)
     email = Column(String, unique=True, index=True)
     password = Column(String)
+    is_admin = Column(Boolean, default=False)
 
     groups = relationship("Group", secondary=group_members, back_populates="members")
     expenses_paid = relationship("Expense", foreign_keys="[Expense.payer_id]", back_populates="payer")

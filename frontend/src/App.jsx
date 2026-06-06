@@ -10,7 +10,8 @@ import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
   registerUser, loginUser, createGroup, addGroupMember, createExpense, sendInvite,
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
-  fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion
+  fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
+  fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -64,22 +65,19 @@ export default function App() {
     const saved = localStorage.getItem('splitclone_user')
     if (!saved) return
     const parsed = JSON.parse(saved)
-    // Validate the stored user still exists in the DB (guards against re-seeded DB)
-    fetch(`http://${window.location.hostname}:8000/users/`)
+    // Always re-fetch from server so is_admin and other fields are fresh
+    fetch(`http://${window.location.hostname}:8000/users/?current_user_id=${parsed.id}`)
       .then(r => r.json())
       .then(users => {
-        const stillExists = Array.isArray(users) && users.some(u => u.id === parsed.id && u.email === parsed.email)
-        if (stillExists) {
-          setUser(parsed)
+        const freshUser = Array.isArray(users) && users.find(u => u.id === parsed.id && u.email === parsed.email)
+        if (freshUser) {
+          localStorage.setItem('splitclone_user', JSON.stringify(freshUser))
+          setUser(freshUser)
         } else {
-          // Stale session — wipe it so the user hits the login screen
           localStorage.removeItem('splitclone_user')
         }
       })
-      .catch(() => {
-        // If the API is unreachable just trust the cached value
-        setUser(parsed)
-      })
+      .catch(() => setUser(parsed))
   }, [])
 
   const handleLogin  = (u) => { setUser(u); localStorage.setItem('splitclone_user', JSON.stringify(u)) }
@@ -192,10 +190,33 @@ function Dashboard({ user, onLogout }) {
   const [showProfile, setShowProfile] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [showNotifs, setShowNotifs] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
+  const wsRef = useRef(null)
+
+  // WebSocket: real-time push for notifications and new chat messages
+  useEffect(() => {
+    const connect = () => {
+      const ws = new WebSocket(getWsUrl(user.id))
+      wsRef.current = ws
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data)
+          if (data.type === 'notification') {
+            setNotifications(prev => [data, ...prev])
+          } else if (data.type === 'new_message') {
+            window.dispatchEvent(new CustomEvent('ws_new_message', { detail: data }))
+          }
+        } catch (_) {}
+      }
+      ws.onclose = () => setTimeout(connect, 3000)
+    }
+    connect()
+    return () => { wsRef.current?.close() }
+  }, [user.id])
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const [g, u, n] = await Promise.all([fetchUserGroups(user.id), fetchUsers(), fetchNotifications(user.id)])
+    const [g, u, n] = await Promise.all([fetchUserGroups(user.id), fetchUsers(user.id), fetchNotifications(user.id)])
     setGroups(g)
     setUsers(u)
     setNotifications(n)
@@ -210,10 +231,15 @@ function Dashboard({ user, onLogout }) {
     return () => clearInterval(interval)
   }, [loadData, user.id])
 
-  const handleMarkRead = async (notifId) => {
+  const handleMarkRead = async (notifId, notif) => {
     try {
       await markNotificationRead(notifId)
       setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, is_read: 1 } : n))
+      if (notif?.message) {
+        const msg = notif.message.toLowerCase()
+        const matchedGroup = groups.find(g => msg.includes(g.name.toLowerCase()))
+        if (matchedGroup) { setShowNotifs(false); setGroup(matchedGroup) }
+      }
     } catch(err) { console.error(err) }
   }
 
@@ -221,20 +247,22 @@ function Dashboard({ user, onLogout }) {
   const handleExpenseAdded = async () => {
     setAddExp(false)
     await loadData()
-    // if we had a selected group, re-select it so its expenses reload
     if (selectedGroup) {
       setGroup(g => groups.find(gr => gr.id === g?.id) || g)
     }
   }
 
-  // Compute overall balance summary
-  const totalOwed = 0   // TODO: aggregate across groups — shown in header
+  const totalOwed = 0
 
   const tabs = [
     { id: 'groups',   label: 'Groups',   icon: Home },
     { id: 'activity', label: 'Activity', icon: Activity },
     { id: 'people',   label: 'People',   icon: Users },
   ]
+
+  if (showAdmin) {
+    return <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} />
+  }
 
   if (selectedGroup) {
     return (
@@ -279,7 +307,7 @@ function Dashboard({ user, onLogout }) {
                       <p className="text-xs text-slate-500 text-center py-6">No notifications</p>
                     ) : (
                       notifications.map(n => (
-                        <div key={n.id} onClick={() => handleMarkRead(n.id)}
+                        <div key={n.id} onClick={() => handleMarkRead(n.id, n)}
                           className={`p-3 text-xs border-b border-slate-700/50 cursor-pointer hover:bg-slate-700/50 transition-colors ${!n.is_read ? 'bg-indigo-500/10' : ''}`}>
                           <p className={`text-slate-300 ${!n.is_read ? 'font-medium' : ''}`}>{n.message}</p>
                           <p className="text-[9px] text-slate-500 mt-1">{new Date(n.created_at).toLocaleString()}</p>
@@ -290,9 +318,16 @@ function Dashboard({ user, onLogout }) {
                 </div>
               )}
             </div>
-            <button onClick={() => setShowProfile(true)} className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-xs font-bold text-white hover:ring-2 hover:ring-indigo-400 transition-all focus:outline-none`}>
+            <button onClick={() => { setShowProfile(true); setShowNotifs(false) }} className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-xs font-bold text-white hover:ring-2 hover:ring-indigo-400 transition-all focus:outline-none`}>
               {user.name.charAt(0).toUpperCase()}
             </button>
+            {user.is_admin && (
+              <button onClick={() => { setShowAdmin(true); setShowNotifs(false) }}
+                title="Admin Portal"
+                className="p-2 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 rounded-lg transition-colors">
+                <Settings className="h-4 w-4" />
+              </button>
+            )}
             <button onClick={onLogout} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors" title="Log out">
               <LogOut className="h-4 w-4" />
             </button>
@@ -835,6 +870,81 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   )
 }
 
+// ── Admin Dashboard ───────────────────────────────────────────────────────────
+function AdminDashboard({ currentUser, onBack }) {
+  const [activeTab, setActiveTab] = useState('users')
+  const [users, setAdminUsers] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    fetchAdminUsers(currentUser.id).then(res => {
+      setAdminUsers(res)
+      setLoading(false)
+    })
+  }, [currentUser.id])
+
+  const handleDeleteUser = async (id) => {
+    if (!confirm('Are you sure you want to delete this user? This cannot be undone.')) return
+    try {
+      await deleteAdminUser(id, currentUser.id)
+      setAdminUsers(prev => prev.filter(u => u.id !== id))
+    } catch (e) {
+      alert('Error deleting user: ' + e.message)
+    }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6 pt-4">
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="flex items-center text-slate-400 hover:text-white transition-colors">
+          <ArrowLeft className="h-5 w-5 mr-2" /> Back to Dashboard
+        </button>
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+        <div className="p-6 border-b border-slate-800">
+          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+            <Settings className="h-6 w-6 text-amber-400" /> Admin Portal
+          </h2>
+          <p className="text-sm text-slate-400 mt-1">Manage platform users and resources</p>
+        </div>
+
+        <div className="p-6">
+          <div className="flex gap-4 mb-6 border-b border-slate-800">
+            <button className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'users' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`}>
+              Users
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-500" /></div>
+          ) : activeTab === 'users' ? (
+            <div className="space-y-3">
+              {users.map(u => (
+                <div key={u.id} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">
+                      {u.name} {u.id === currentUser.id && <span className="text-xs text-indigo-400 ml-2">(You)</span>}
+                      {u.is_admin && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded ml-2 font-bold uppercase tracking-wider">Admin</span>}
+                    </p>
+                    <p className="text-xs text-slate-500">{u.email} • ID: {u.id}</p>
+                  </div>
+                  {u.id !== currentUser.id && !u.is_admin && (
+                    <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
 // ── Expense Chat ──────────────────────────────────────────────────────────────
 function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }) {
   const [messages, setMessages] = useState([])
@@ -845,20 +955,30 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }
   const scrollRef = useRef(null)
   const initialScrollDone = useRef(false)
 
-  const loadChat = useCallback(async () => {
-    try {
-      const data = await fetchExpenseChat(expenseId)
-      setMessages(data)
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    fetchExpenseChat(expenseId).then(setMessages).finally(() => setLoading(false))
   }, [expenseId])
 
   useEffect(() => {
-    loadChat()
-    const interval = setInterval(loadChat, 5000)
+    const handleWsMsg = (e) => {
+      const data = e.detail
+      if (data.expense_id === expenseId) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === data.id)) return prev
+          return [...prev, data]
+        })
+      }
+    }
+    window.addEventListener('ws_new_message', handleWsMsg)
+    return () => window.removeEventListener('ws_new_message', handleWsMsg)
+  }, [expenseId])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchExpenseChat(expenseId).then(setMessages)
+    }, 5000)
     return () => clearInterval(interval)
-  }, [loadChat])
+  }, [expenseId])
 
   useEffect(() => {
     if (messages.length > 0 && scrollRef.current) {
@@ -1348,6 +1468,41 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
       if (Math.abs(allocated - numAmount) > 0.005) {
         finalSplits[finalSplits.length - 1].amount += parseFloat((numAmount - allocated).toFixed(2))
       }
+    } else if (splitMode === 'adjusted') {
+      let fixedTotal = 0
+      const activeIds = selectedUsers.length > 0 ? selectedUsers : users.map(u => u.id)
+      
+      activeIds.forEach(uid => {
+        const amt = parseFloat(splitValues[uid])
+        if (!isNaN(amt)) fixedTotal += amt
+      })
+      
+      const remaining = numAmount - fixedTotal
+      const remainderCount = activeIds.filter(uid => !splitValues[uid] || isNaN(parseFloat(splitValues[uid]))).length
+      
+      if (remainderCount === 0 && Math.abs(remaining) > 0.01) {
+        return setError(`Adjustments sum to £${fixedTotal.toFixed(2)}, but total is £${numAmount.toFixed(2)} with no remainder pool.`)
+      }
+      
+      const perPersonRemainder = remainderCount > 0 ? remaining / remainderCount : 0
+      
+      let allocated = 0
+      finalSplits = activeIds.map((uid, idx) => {
+        let a = 0
+        if (splitValues[uid] && !isNaN(parseFloat(splitValues[uid]))) {
+           a = parseFloat(splitValues[uid])
+        } else {
+           a = parseFloat(perPersonRemainder.toFixed(2))
+        }
+        
+        // fix rounding
+        if (idx === activeIds.length - 1) {
+           a = parseFloat((numAmount - allocated).toFixed(2))
+        }
+        allocated += a
+        return { user_id: uid, amount: a }
+      })
+      if (finalSplits.length === 0) return setError('Select at least one person')
     }
 
     setLoading(true)
@@ -1391,14 +1546,14 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         ) : (
           <>
             {/* Modal header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
+            <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md z-10 flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
               <h3 className="font-bold text-white text-lg">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
               <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto">
+            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar">
 
               {/* Description */}
               <div>
@@ -1456,18 +1611,20 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Split Mode</label>
                 </div>
                 
-                <div className="flex bg-slate-900 border border-slate-700/60 rounded-xl p-1 mb-4">
-                  {['equal', 'exact', 'percentage'].map(mode => (
-                    <button key={mode} type="button" onClick={() => setSplitMode(mode)}
-                      className={`flex-1 text-xs font-semibold py-2 rounded-lg capitalize transition-all ${splitMode === mode ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`}>
+                <div className="flex bg-slate-900 border border-slate-700/60 rounded-xl p-1 mb-4 overflow-x-auto custom-scrollbar">
+                  {['equal', 'exact', 'percentage', 'adjusted'].map(mode => (
+                    <button key={mode} type="button" onClick={() => { setSplitMode(mode); setSplitValues({}) }}
+                      className={`flex-1 min-w-[80px] text-xs font-semibold py-2 px-2 rounded-lg capitalize transition-all ${splitMode === mode ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`}>
                       {mode}
                     </button>
                   ))}
                 </div>
 
-                {splitMode === 'equal' && (
+                {(splitMode === 'equal' || splitMode === 'adjusted') && (
                   <>
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Split equally with</label>
+                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                      {splitMode === 'equal' ? 'Split equally with' : 'People involved'}
+                    </label>
                     <div className="flex flex-wrap gap-2">
                       {users.map(u => {
                         const sel = selectedUsers.includes(u.id)
@@ -1482,7 +1639,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                         )
                       })}
                     </div>
-                    {amount && selectedUsers.length > 0 && (
+                    {amount && splitMode === 'equal' && selectedUsers.length > 0 && (
                       <p className="text-xs text-slate-500 mt-2">
                         £{(parseFloat(amount) / selectedUsers.length).toFixed(2)} per person across {selectedUsers.length} {selectedUsers.length === 1 ? 'person' : 'people'}
                       </p>
@@ -1491,38 +1648,44 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                 )}
 
                 {splitMode !== 'equal' && (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                    {users.map(u => (
-                      <div key={u.id} className="flex items-center justify-between gap-3 bg-slate-800/40 p-2 rounded-xl border border-slate-700/50">
+                  <div className="space-y-2 mt-4 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                    {(splitMode === 'adjusted' && selectedUsers.length > 0 ? users.filter(u => selectedUsers.includes(u.id)) : users).map(u => (
+                      <div key={u.id} className="flex items-center justify-between gap-3 bg-slate-800/40 p-2.5 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
                         <div className="flex items-center gap-2">
                           <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
                             {u.name.charAt(0)}
                           </div>
                           <p className="text-sm font-medium text-slate-200">{u.id === currentUser.id ? 'You' : u.name}</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {splitMode === 'exact' && <span className="text-slate-400 text-sm">£</span>}
-                          <input type="number" step="0.01" min="0" 
+                        <div className="relative w-24">
+                          {splitMode !== 'percentage' && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium text-sm">£</span>}
+                          <input type="number" step="0.01" min={splitMode==='adjusted'?undefined:"0"}
                             value={splitValues[u.id] || ''}
                             onChange={(e) => handleSplitValueChange(u.id, e.target.value)}
-                            className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-right text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-600"
-                            placeholder="0.00"
+                            className={`w-full bg-slate-900/80 border border-slate-600 rounded-lg py-1.5 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 text-slate-100 placeholder-slate-600 text-sm font-medium transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${splitMode === 'percentage' ? 'text-right pr-6 pl-3' : 'text-left pl-7 pr-3'}`}
+                            placeholder={splitMode === 'adjusted' ? 'Auto' : '0.00'}
                           />
-                          {splitMode === 'percentage' && <span className="text-slate-400 text-sm">%</span>}
+                          {splitMode === 'percentage' && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium text-sm">%</span>}
                         </div>
                       </div>
                     ))}
-                    <div className="pt-2 text-xs font-medium text-right flex justify-between px-1">
-                      <span className="text-slate-500">Total Allocated:</span>
-                      <span className={
-                        (splitMode === 'exact' && Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0) !== parseFloat(amount||0)) ||
-                        (splitMode === 'percentage' && Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0) !== 100)
-                          ? 'text-amber-400' : 'text-emerald-400'
-                      }>
-                        {splitMode === 'exact' 
-                          ? `£${Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)} of £${(parseFloat(amount)||0).toFixed(2)}`
-                          : `${Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)}% of 100%`}
-                      </span>
+                    <div className="pt-3 text-xs font-medium flex justify-between px-1">
+                      <span className="text-slate-500 uppercase tracking-wider">{splitMode === 'adjusted' ? 'Fixed Pool:' : 'Total Allocated:'}</span>
+                      {splitMode === 'adjusted' ? (
+                        <span className="text-indigo-400 font-semibold">
+                          £{Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)} / £{(parseFloat(amount)||0).toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className={
+                          (splitMode === 'exact' && Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0) !== parseFloat(amount||0)) ||
+                          (splitMode === 'percentage' && Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0) !== 100)
+                            ? 'text-amber-400 font-semibold' : 'text-emerald-400 font-semibold'
+                        }>
+                          {splitMode === 'exact' 
+                            ? `£${Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)} / £{(parseFloat(amount)||0).toFixed(2)}`
+                            : `${Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)}% / 100%`}
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}

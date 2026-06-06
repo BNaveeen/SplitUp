@@ -8,8 +8,8 @@ async function handleResponse(res) {
   return res.json();
 }
 
-export const fetchUsers = () =>
-  fetch(`${API_URL}/users/`).then(handleResponse).catch(() => []);
+export const fetchUsers = (userId = null) =>
+  fetch(`${API_URL}/users/${userId ? `?current_user_id=${userId}` : ''}`).then(handleResponse).catch(() => []);
 
 export const fetchUserGroups = (userId) =>
   fetch(`${API_URL}/users/${userId}/groups/`).then(handleResponse).catch(() => []);
@@ -116,3 +116,17 @@ export const markNotificationRead = (notifId) =>
   fetch(`${API_URL}/notifications/${notifId}/mark_read`, {
     method: 'POST',
   }).then(handleResponse);
+
+// Admin API
+export const fetchAdminUsers = (adminId) =>
+  fetch(`${API_URL}/admin/users?admin_id=${adminId}`).then(handleResponse).catch(() => []);
+
+export const deleteAdminUser = (userId, adminId) =>
+  fetch(`${API_URL}/admin/users/${userId}?admin_id=${adminId}`, { method: 'DELETE' }).then(handleResponse);
+
+export const deleteAdminGroup = (groupId, adminId) =>
+  fetch(`${API_URL}/admin/groups/${groupId}?admin_id=${adminId}`, { method: 'DELETE' }).then(handleResponse);
+
+// WebSocket URL helper
+export const getWsUrl = (userId) =>
+  `ws://${window.location.hostname}:8000/ws/${userId}`;
