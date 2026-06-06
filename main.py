@@ -127,6 +127,8 @@ class NotificationResponse(BaseModel):
     id: int
     user_id: int
     message: str
+    group_id: Optional[int] = None
+    expense_id: Optional[int] = None
     is_read: int
     created_at: str
     class Config:
@@ -180,7 +182,10 @@ def register_user(user: UserRegister, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    new_user = User(name=user.name, email=user.email, password=user.password)
+        
+    # First registered user is automatically an admin
+    is_first = db.query(User).count() == 0
+    new_user = User(name=user.name, email=user.email, password=user.password, is_admin=is_first)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -227,6 +232,35 @@ def admin_get_users(admin_id: int, db: Session = Depends(get_db)):
     if not admin:
         raise HTTPException(status_code=403, detail="Admin privileges required")
     return db.query(User).all()
+
+@app.post("/admin/users", response_model=UserResponse)
+def admin_create_user(admin_id: int, user: UserRegister, is_admin_flag: bool = False, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    new_user = User(name=user.name, email=user.email, password=user.password, is_admin=is_admin_flag)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+@app.put("/admin/users/{user_id}/toggle_admin", response_model=UserResponse)
+def admin_toggle_admin(user_id: int, admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    if user_id == admin_id:
+        raise HTTPException(status_code=400, detail="Cannot toggle your own admin status")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_admin = not user.is_admin
+    db.commit()
+    db.refresh(user)
+    return user
 
 @app.delete("/admin/users/{user_id}")
 def admin_delete_user(user_id: int, admin_id: int, db: Session = Depends(get_db)):
@@ -880,7 +914,7 @@ def accept_invite(token: str, user_id: int, db: Session = Depends(get_db)):
 
 def _add_notification(db: Session, user_id: int, message: str, expense_id: int = None, group_id: int = None):
     from database import Notification
-    n = Notification(user_id=user_id, message=message, expense_id=expense_id, group_id=group_id)
+    n = Notification(user_id=user_id, message=message, expense_id=expense_id, group_id=group_id, is_read=0)
     db.add(n)
     db.flush()  # get ID without full commit
     # Schedule non-blocking WS push (runs after current DB transaction commits)

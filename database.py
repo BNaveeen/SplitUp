@@ -7,8 +7,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./splitwise_v2.db")
+# Easily switch between local SQLite and Supabase PostgreSQL
+USE_SUPABASE = os.environ.get("USE_SUPABASE", "false").lower() == "true"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 
+if USE_SUPABASE and SUPABASE_URL:
+    SQLALCHEMY_DATABASE_URL = SUPABASE_URL
+else:
+    SQLALCHEMY_DATABASE_URL = "sqlite:///./splitwise_v2.db"
+
+# Detect if we are using SQLite vs Postgres based on the URL
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
