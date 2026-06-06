@@ -128,6 +128,16 @@ export const deleteAdminUser = (userId, adminId) =>
 export const deleteAdminGroup = (groupId, adminId) =>
   fetch(`${API_URL}/admin/groups/${groupId}?admin_id=${adminId}`, { method: 'DELETE' }).then(handleResponse);
 
+export const toggleAdminStatus = (userId, adminId) =>
+  fetch(`${API_URL}/admin/users/${userId}/toggle_admin?admin_id=${adminId}`, { method: 'PUT' }).then(handleResponse);
+
+export const adminCreateUser = (adminId, name, email, password, isAdminFlag) =>
+  fetch(`${API_URL}/admin/users?admin_id=${adminId}&is_admin_flag=${isAdminFlag}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  }).then(handleResponse);
+
 // WebSocket URL helper
 export const getWsUrl = (userId) => {
   const wsProtocol = isLocal ? 'ws' : 'wss';

@@ -10,8 +10,8 @@ import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
   registerUser, loginUser, createGroup, addGroupMember, createExpense, sendInvite,
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
-  fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
-  fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl
+  markExpenseViewed, deleteExpenseMessage, fetchNotifications, markNotificationRead,
+  fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -978,6 +978,36 @@ function AdminDashboard({ currentUser, onBack }) {
       alert('Error deleting user: ' + e.message)
     }
   }
+  const [newName, setNewName] = useState('')
+  const [newEmail, setNewEmail] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newIsAdmin, setNewIsAdmin] = useState(false)
+  const [createLoading, setCreateLoading] = useState(false)
+
+  const handleToggleAdmin = async (id) => {
+    try {
+      const updatedUser = await toggleAdminStatus(id, currentUser.id)
+      setAdminUsers(prev => prev.map(u => u.id === id ? updatedUser : u))
+    } catch (e) {
+      alert('Error toggling admin: ' + e.message)
+    }
+  }
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault()
+    if (!newName || !newEmail || !newPassword) return
+    setCreateLoading(true)
+    try {
+      const newUser = await adminCreateUser(currentUser.id, newName, newEmail, newPassword, newIsAdmin)
+      setAdminUsers(prev => [...prev, newUser])
+      setNewName(''); setNewEmail(''); setNewPassword(''); setNewIsAdmin(false);
+      setActiveTab('users')
+    } catch (e) {
+      alert('Error creating user: ' + e.message)
+    } finally {
+      setCreateLoading(false)
+    }
+  }
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6 pt-4">
@@ -997,8 +1027,11 @@ function AdminDashboard({ currentUser, onBack }) {
 
         <div className="p-6">
           <div className="flex gap-4 mb-6 border-b border-slate-800">
-            <button className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'users' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`}>
+            <button className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'users' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`} onClick={() => setActiveTab('users')}>
               Users
+            </button>
+            <button className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'create' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`} onClick={() => setActiveTab('create')}>
+              Create User
             </button>
           </div>
 
@@ -1015,14 +1048,32 @@ function AdminDashboard({ currentUser, onBack }) {
                     </p>
                     <p className="text-xs text-slate-500">{u.email} • ID: {u.id}</p>
                   </div>
-                  {u.id !== currentUser.id && !u.is_admin && (
-                    <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                  {u.id !== currentUser.id && (
+                    <div className="flex gap-2">
+                      <button onClick={() => handleToggleAdmin(u.id)} className={`p-2 rounded-lg transition-colors text-xs font-semibold ${u.is_admin ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-500'}`}>
+                        {u.is_admin ? 'Remove Admin' : 'Make Admin'}
+                      </button>
+                      <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
             </div>
+          ) : activeTab === 'create' ? (
+            <form onSubmit={handleCreateUser} className="space-y-4 max-w-sm">
+              <input type="text" placeholder="Name" value={newName} onChange={e => setNewName(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-indigo-500 outline-none" required />
+              <input type="email" placeholder="Email" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-indigo-500 outline-none" required />
+              <input type="password" placeholder="Password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-indigo-500 outline-none" required />
+              <label className="flex items-center gap-2 text-slate-300 cursor-pointer text-sm">
+                <input type="checkbox" checked={newIsAdmin} onChange={e => setNewIsAdmin(e.target.checked)} className="accent-indigo-500 w-4 h-4" />
+                Grant Admin Privileges
+              </label>
+              <button type="submit" disabled={createLoading} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-medium py-2.5 rounded-xl transition-colors">
+                {createLoading ? 'Creating...' : 'Create User'}
+              </button>
+            </form>
           ) : null}
         </div>
       </div>
