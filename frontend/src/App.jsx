@@ -185,6 +185,7 @@ function Dashboard({ user, onLogout }) {
   const [groups, setGroups]         = useState([])
   const [users, setUsers]           = useState([])
   const [selectedGroup, setGroup]   = useState(null)  // GroupDetailView
+  const [focusExpenseId, setFocusExpenseId] = useState(null)
   const [showAddExpense, setAddExp] = useState(false)
   const [loading, setLoading]       = useState(true)
   const [showProfile, setShowProfile] = useState(false)
@@ -196,7 +197,13 @@ function Dashboard({ user, onLogout }) {
   // WebSocket: real-time push for notifications and new chat messages
   useEffect(() => {
     const connect = () => {
-      const ws = new WebSocket(getWsUrl(user.id))
+      let ws;
+      try {
+        ws = new WebSocket(getWsUrl(user.id))
+      } catch (err) {
+        console.error("WebSocket connection failed (likely GitHub Pages mixed content):", err)
+        return
+      }
       wsRef.current = ws
       ws.onmessage = (evt) => {
         try {
@@ -235,10 +242,17 @@ function Dashboard({ user, onLogout }) {
     try {
       await markNotificationRead(notifId)
       setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, is_read: 1 } : n))
-      if (notif?.message) {
+      if (notif?.group_id) {
+        const matchedGroup = groups.find(g => g.id === notif.group_id)
+        if (matchedGroup) { 
+          setShowNotifs(false); 
+          setGroup(matchedGroup);
+          if (notif.expense_id) setFocusExpenseId(notif.expense_id);
+        }
+      } else if (notif?.message) {
         const msg = notif.message.toLowerCase()
         const matchedGroup = groups.find(g => msg.includes(g.name.toLowerCase()))
-        if (matchedGroup) { setShowNotifs(false); setGroup(matchedGroup) }
+        if (matchedGroup) { setShowNotifs(false); setGroup(matchedGroup); setFocusExpenseId(null); }
       }
     } catch(err) { console.error(err) }
   }
@@ -271,8 +285,9 @@ function Dashboard({ user, onLogout }) {
         currentUser={user}
         allUsers={users}
         allGroups={groups}
-        onBack={() => setGroup(null)}
+        onBack={() => { setGroup(null); setFocusExpenseId(null); }}
         onGroupUpdated={loadData}
+        focusExpenseId={focusExpenseId}
       />
     )
   }
@@ -491,7 +506,7 @@ function GroupsTab({ groups, currentUser, onSelectGroup, onGroupCreated }) {
 }
 
 // ── Group Detail View ─────────────────────────────────────────────────────────
-function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated }) {
+function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated, focusExpenseId }) {
   const [expenses, setExpenses] = useState([])
   const [balances, setBalances] = useState([])
   const [members, setMembers]   = useState(group.members || [])
@@ -509,6 +524,9 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
   const [showValidOnly, setShowValidOnly] = useState(false)
+  const [viewedChats, setViewedChats] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`split_chat_viewed_${currentUser.id}`) || '{}') } catch { return {} }
+  })
 
   // Build contact set — users that share any group with the current user (highest priority)
   const contactIds = new Set()
@@ -542,7 +560,33 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     setLoading(false)
   }, [group.id])
 
-  useEffect(() => { loadGroupData() }, [loadGroupData])
+  useEffect(() => { 
+    loadGroupData()
+    // mark all group chats as viewed when entering group (optimistic)
+    const viewUpdates = { ...viewedChats }
+    let changed = false
+    expenses.forEach(e => {
+      if (e.last_message_at) {
+        if (!viewUpdates[e.id] || new Date(e.last_message_at) > new Date(viewUpdates[e.id])) {
+          viewUpdates[e.id] = new Date().toISOString()
+          changed = true
+        }
+      }
+    })
+    if (changed) {
+      setViewedChats(viewUpdates)
+      localStorage.setItem(`split_chat_viewed_${currentUser.id}`, JSON.stringify(viewUpdates))
+    }
+  }, [group.id])
+
+  useEffect(() => {
+    if (focusExpenseId && expenses.some(e => e.id === focusExpenseId)) {
+      setTimeout(() => {
+        const el = document.getElementById(`expense-${focusExpenseId}`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 300)
+    }
+  }, [focusExpenseId, expenses])
 
   const handleDeleteExpense = async (expenseId) => {
     if (confirm("Are you sure you want to delete this expense? This will require approval from everyone involved.")) {
@@ -838,6 +882,8 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               onDeleteExpense={handleDeleteExpense}
               onApproveDelete={handleApproveDelete}
               onRejectDelete={handleRejectDelete}
+              viewedChats={viewedChats}
+              focusExpenseId={focusExpenseId}
             />
           </>
         ) : (
@@ -1099,31 +1145,20 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }
 }
 
 // ── Expense List (Splitwise-style) ────────────────────────────────────────────
-function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete }) {
-  const [expandedChatId, setExpandedChatId] = useState(null)
-  const [viewedChats, setViewedChats] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('viewedChats') || '{}')
-    } catch { return {} }
-  })
+function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId }) {
+  const [expandedChatId, setExpandedChatId] = useState(focusExpenseId || null)
 
-  const markChatViewed = (expId) => {
-    setViewedChats(prev => {
-      const updated = { ...prev, [expId]: new Date().toISOString() }
-      localStorage.setItem('viewedChats', JSON.stringify(updated))
-      return updated
-    })
-  }
-
-  const oldViewedRef = useRef({})
+  useEffect(() => {
+    if (focusExpenseId) {
+      setExpandedChatId(focusExpenseId)
+    }
+  }, [focusExpenseId])
 
   const handleToggleChat = (expId) => {
     if (expandedChatId === expId) {
       setExpandedChatId(null)
     } else {
-      oldViewedRef.current[expId] = viewedChats[expId]
       setExpandedChatId(expId)
-      markChatViewed(expId)
     }
   }
 
@@ -1190,7 +1225,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
               const isDeleted = e.status === 'deleted'
 
               return (
-                <motion.div key={e.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
+                <motion.div key={e.id} id={`expense-${e.id}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
                   className={`flex flex-col gap-2 ${isDeleted ? 'bg-slate-900/30 opacity-60 grayscale' : 'bg-slate-800/40 hover:bg-slate-800/70'} border ${(e.status === 'pending_deletion' || e.status === 'approved_for_deletion') ? 'border-amber-500/50' : 'border-slate-700/30'} hover:border-slate-600/50 rounded-xl px-3 py-3 transition-all relative overflow-hidden`}>
                   
                   {isDeleted && (
@@ -1287,7 +1322,6 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                       expenseId={e.id} 
                       currentUser={currentUser} 
                       expenseUsers={allUsers}
-                      lastViewedAt={oldViewedRef.current[e.id]}
                     />
                   )}
                 </motion.div>
