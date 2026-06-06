@@ -10,7 +10,7 @@ import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
   registerUser, loginUser, createGroup, addGroupMember, createExpense, sendInvite,
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
-  markExpenseViewed, deleteExpenseMessage, fetchNotifications, markNotificationRead,
+  fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser
 } from './api'
 
