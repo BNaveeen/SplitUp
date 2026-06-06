@@ -43,6 +43,9 @@ export const rejectSettlement = (id) =>
 export const fetchPendingSettlements = (userId) =>
   fetch(`${API_URL}/users/${userId}/pending_settlements`).then(handleResponse).catch(() => []);
 
+export const fetchInitiatedSettlements = (userId) =>
+  fetch(`${API_URL}/users/${userId}/initiated_settlements`).then(handleResponse).catch(() => []);
+
 export const registerUser = (name, email, password) =>
   fetch(`${API_URL}/register/`, {
     method: 'POST',

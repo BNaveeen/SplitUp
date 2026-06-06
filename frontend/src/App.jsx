@@ -12,7 +12,8 @@ import {
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
-  fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements
+  fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements,
+  fetchInitiatedSettlements
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -196,6 +197,7 @@ function Dashboard({ user, onLogout }) {
   const [showAdmin, setShowAdmin] = useState(false)
   const [globalBalances, setGlobalBalances] = useState([])
   const [pendingSettlements, setPendingSettlements] = useState([])
+  const [initiatedSettlements, setInitiatedSettlements] = useState([])
   const [showPendingSettlements, setShowPendingSettlements] = useState(false)
   const wsRef = useRef(null)
 
@@ -230,18 +232,20 @@ function Dashboard({ user, onLogout }) {
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const [g, u, n, b, ps] = await Promise.all([
+    const [g, u, n, b, ps, is] = await Promise.all([
       fetchUserGroups(user.id), 
       fetchUsers(user.id), 
       fetchNotifications(user.id),
       fetchAllUserBalances(user.id),
-      fetchPendingSettlements(user.id)
+      fetchPendingSettlements(user.id),
+      fetchInitiatedSettlements(user.id)
     ])
     setGroups(g)
     setUsers(u)
     setNotifications(n)
     setGlobalBalances(b)
     setPendingSettlements(ps)
+    setInitiatedSettlements(is)
     setLoading(false)
   }, [user.id])
 
@@ -303,6 +307,7 @@ function Dashboard({ user, onLogout }) {
         onBack={() => { setGroup(null); setFocusExpenseId(null); }}
         onGroupUpdated={loadData}
         focusExpenseId={focusExpenseId}
+        initiatedSettlements={initiatedSettlements}
       />
     )
   }
@@ -549,7 +554,7 @@ function GroupsTab({ groups, currentUser, onSelectGroup, onGroupCreated }) {
 }
 
 // ── Group Detail View ─────────────────────────────────────────────────────────
-function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated, focusExpenseId }) {
+function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated, focusExpenseId, initiatedSettlements = [] }) {
   const [expenses, setExpenses] = useState([])
   const [balances, setBalances] = useState([])
   const [members, setMembers]   = useState(group.members || [])
@@ -951,6 +956,8 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               viewedChats={viewedChats}
               focusExpenseId={focusExpenseId}
               markChatViewed={markChatViewed}
+              initiatedSettlements={initiatedSettlements}
+              onReload={loadGroupData}
             />
           </>
         ) : (
@@ -1423,24 +1430,33 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                     <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
                       <p className={`text-xs font-semibold ${balColor}`}>{balLabel}</p>
                       {!iPaid && mySplit && e.status !== 'deleted' && (
-                        <button 
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            if (window.confirm(`Mark your share (£${mySplit.amount.toFixed(2)}) as paid?`)) {
-                              createSettlement({
-                                payer_id: currentUser.id,
-                                payee_id: e.payer_id,
-                                amount: mySplit.amount,
-                                group_id: e.group_id,
-                                expense_id: e.id
-                              }).then(() => alert("Payment sent for approval!"))
-                              .catch(() => alert("Failed to send payment request."));
-                            }
-                          }}
-                          className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors border border-emerald-500/30"
-                        >
-                          Mark as Paid
-                        </button>
+                        initiatedSettlements.some(s => s.expense_id === e.id) ? (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700/50 text-slate-400 border border-slate-600/50">
+                            Waiting...
+                          </span>
+                        ) : (
+                          <button 
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              if (window.confirm(`Mark your share (£${mySplit.amount.toFixed(2)}) as paid?`)) {
+                                createSettlement({
+                                  payer_id: currentUser.id,
+                                  payee_id: e.payer_id,
+                                  amount: mySplit.amount,
+                                  group_id: e.group_id,
+                                  expense_id: e.id
+                                }).then(() => {
+                                  alert("Payment sent for approval!")
+                                  if (onReload) onReload()
+                                })
+                                .catch(() => alert("Failed to send payment request."));
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors border border-emerald-500/30"
+                          >
+                            Mark as Paid
+                          </button>
+                        )
                       )}
                     </div>
                   </div>
