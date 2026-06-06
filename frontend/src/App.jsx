@@ -1452,15 +1452,21 @@ function ActivityTab({ currentUser, groups }) {
 }
 
 // ── People Tab ────────────────────────────────────────────────────────────────
-function PeopleTab({ users, currentUser }) {
+function PeopleTab({ users, currentUser, groups = [] }) {
+  const visibleUsers = currentUser?.is_admin ? users : users.filter(u => {
+    if (u.id === currentUser.id) return true
+    return groups.some(g => g.members?.some(m => m.id === u.id))
+  })
+
   return (
     <div className="pt-6 space-y-2">
       <h2 className="text-xl font-bold text-white mb-4">People</h2>
-      {users.map((u, i) => (
+      {visibleUsers.length === 0 && <p className="text-slate-500 text-sm">No people to show yet. Join a group!</p>}
+      {visibleUsers.map((u, i) => (
         <motion.div key={u.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
           className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-2xl px-4 py-3">
           <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
-            {u.name.charAt(0)}
+            {u.name.charAt(0).toUpperCase()}
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold text-slate-100">{u.name} {u.id === currentUser.id && <span className="text-indigo-400 text-xs">(You)</span>}</p>
