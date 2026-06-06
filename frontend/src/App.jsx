@@ -392,7 +392,7 @@ function Dashboard({ user, onLogout }) {
               )}
 
               {activeTab === 'people' && (
-                <PeopleTab users={users} currentUser={user} />
+                <PeopleTab users={users} currentUser={user} groups={groups} />
               )}
 
             </motion.div>
