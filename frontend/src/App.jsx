@@ -1270,7 +1270,7 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }
 }
 
 // ── Expense List (Splitwise-style) ────────────────────────────────────────────
-function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed }) {
+function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed, initiatedSettlements = [], onReload }) {
   const [expandedChatId, setExpandedChatId] = useState(focusExpenseId || null)
 
   useEffect(() => {
