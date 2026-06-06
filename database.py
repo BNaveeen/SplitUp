@@ -8,10 +8,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Easily switch between local SQLite and Supabase PostgreSQL
+# Render sets DATABASE_URL; locally we use USE_SUPABASE + SUPABASE_URL
 USE_SUPABASE = os.environ.get("USE_SUPABASE", "false").lower() == "true"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-if USE_SUPABASE and SUPABASE_URL:
+if DATABASE_URL:
+    SQLALCHEMY_DATABASE_URL = DATABASE_URL
+elif USE_SUPABASE and SUPABASE_URL:
     SQLALCHEMY_DATABASE_URL = SUPABASE_URL
 else:
     SQLALCHEMY_DATABASE_URL = "sqlite:///./splitwise_v2.db"
