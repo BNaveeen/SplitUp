@@ -59,6 +59,38 @@ const avatarColors = [
 ]
 function avatarColor(id) { return avatarColors[(id - 1) % avatarColors.length] }
 
+// ── Error Boundary ───────────────────────────────────────────────────────────
+import React from 'react'
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error, info) {
+    console.error('ErrorBoundary caught:', error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 32, color: '#f87171', background: '#0f172a', minHeight: '100vh' }}>
+          <h2 style={{ marginBottom: 12 }}>Something went wrong</h2>
+          <pre style={{ fontSize: 12, color: '#94a3b8', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {this.state.error?.message || 'Unknown error'}
+          </pre>
+          <button onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload() }}
+            style={{ marginTop: 16, padding: '8px 20px', background: '#6366f1', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+            Reload
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null)
@@ -299,16 +331,18 @@ function Dashboard({ user, onLogout }) {
 
   if (selectedGroup) {
     return (
-      <GroupDetailView
-        group={selectedGroup}
-        currentUser={user}
-        allUsers={users}
-        allGroups={groups}
-        onBack={() => { setGroup(null); setFocusExpenseId(null); }}
-        onGroupUpdated={loadData}
-        focusExpenseId={focusExpenseId}
-        initiatedSettlements={initiatedSettlements}
-      />
+      <ErrorBoundary>
+        <GroupDetailView
+          group={selectedGroup}
+          currentUser={user}
+          allUsers={users}
+          allGroups={groups}
+          onBack={() => { setGroup(null); setFocusExpenseId(null); }}
+          onGroupUpdated={loadData}
+          focusExpenseId={focusExpenseId}
+          initiatedSettlements={initiatedSettlements}
+        />
+      </ErrorBoundary>
     )
   }
 
