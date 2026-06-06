@@ -27,6 +27,22 @@ export const fetchGroupBalances = (groupId) =>
 export const fetchAllUserBalances = (userId) =>
   fetch(`${API_URL}/users/${userId}/all_balances`).then(handleResponse).catch(() => []);
 
+export const createSettlement = (data) =>
+  fetch(`${API_URL}/settlements/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  }).then(handleResponse);
+
+export const approveSettlement = (id) =>
+  fetch(`${API_URL}/settlements/${id}/approve`, { method: 'POST' }).then(handleResponse);
+
+export const rejectSettlement = (id) =>
+  fetch(`${API_URL}/settlements/${id}/reject`, { method: 'POST' }).then(handleResponse);
+
+export const fetchPendingSettlements = (userId) =>
+  fetch(`${API_URL}/users/${userId}/pending_settlements`).then(handleResponse).catch(() => []);
+
 export const registerUser = (name, email, password) =>
   fetch(`${API_URL}/register/`, {
     method: 'POST',

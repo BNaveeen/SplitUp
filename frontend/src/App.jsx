@@ -12,7 +12,7 @@ import {
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
-  fetchAllUserBalances
+  fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -195,6 +195,8 @@ function Dashboard({ user, onLogout }) {
   const [toastNotif, setToastNotif] = useState(null)
   const [showAdmin, setShowAdmin] = useState(false)
   const [globalBalances, setGlobalBalances] = useState([])
+  const [pendingSettlements, setPendingSettlements] = useState([])
+  const [showPendingSettlements, setShowPendingSettlements] = useState(false)
   const wsRef = useRef(null)
 
   // WebSocket: real-time push for notifications and new chat messages
@@ -228,16 +230,18 @@ function Dashboard({ user, onLogout }) {
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const [g, u, n, b] = await Promise.all([
+    const [g, u, n, b, ps] = await Promise.all([
       fetchUserGroups(user.id), 
       fetchUsers(user.id), 
       fetchNotifications(user.id),
-      fetchAllUserBalances(user.id)
+      fetchAllUserBalances(user.id),
+      fetchPendingSettlements(user.id)
     ])
     setGroups(g)
     setUsers(u)
     setNotifications(n)
     setGlobalBalances(b)
+    setPendingSettlements(ps)
     setLoading(false)
   }, [user.id])
 
@@ -316,6 +320,12 @@ function Dashboard({ user, onLogout }) {
             <span className="font-bold text-white text-lg">SplitWise</span>
           </div>
           <div className="flex items-center gap-2">
+            {pendingSettlements.length > 0 && (
+              <button onClick={() => setShowPendingSettlements(true)} className="flex items-center gap-1.5 px-2 py-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors border border-emerald-500/20">
+                <CheckCircle className="h-3.5 w-3.5" />
+                {pendingSettlements.length} Pending
+              </button>
+            )}
             <div className="relative">
               <button onClick={() => setShowNotifs(!showNotifs)} className="relative p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
                 <Bell className="h-4 w-4" />
@@ -448,6 +458,16 @@ function Dashboard({ user, onLogout }) {
             groups={groups}
             onClose={() => setAddExp(false)}
             onSuccess={handleExpenseAdded}
+          />
+        )}
+      </AnimatePresence>
+      
+      <AnimatePresence>
+        {showPendingSettlements && (
+          <PendingSettlementsModal 
+            settlements={pendingSettlements} 
+            onClose={() => setShowPendingSettlements(false)} 
+            onUpdate={loadData}
           />
         )}
       </AnimatePresence>
@@ -1400,8 +1420,28 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                       </p>
                     </div>
                     {/* Balance */}
-                    <div className="text-right shrink-0 flex flex-col items-end justify-center">
+                    <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
                       <p className={`text-xs font-semibold ${balColor}`}>{balLabel}</p>
+                      {!iPaid && mySplit && e.status !== 'deleted' && (
+                        <button 
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            if (window.confirm(`Mark your share (£${mySplit.amount.toFixed(2)}) as paid?`)) {
+                              createSettlement({
+                                payer_id: currentUser.id,
+                                payee_id: e.payer_id,
+                                amount: mySplit.amount,
+                                group_id: e.group_id,
+                                expense_id: e.id
+                              }).then(() => alert("Payment sent for approval!"))
+                              .catch(() => alert("Failed to send payment request."));
+                            }
+                          }}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors border border-emerald-500/30"
+                        >
+                          Mark as Paid
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1518,6 +1558,25 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [] }) {
     return groups.some(g => g.members?.some(m => m.id === u.id))
   })
 
+  const handleSettleGlobal = async (balanceObj) => {
+    try {
+      for (const gb of balanceObj.group_balances) {
+        if (gb.amount < 0) {
+          await createSettlement({
+            payer_id: currentUser.id,
+            payee_id: balanceObj.other_user_id,
+            amount: Math.abs(gb.amount),
+            group_id: gb.group_id
+          })
+        }
+      }
+      setSelectedBalance(null)
+      alert("Settlement request sent to " + balanceObj.other_user_name)
+    } catch (e) {
+      alert("Failed to send settlement request.")
+    }
+  }
+
   return (
     <div className="pt-6 space-y-2">
       <h2 className="text-xl font-bold text-white mb-4">People</h2>
@@ -1558,6 +1617,7 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [] }) {
           <BalanceBreakdownModal 
             balanceObj={selectedBalance} 
             onClose={() => setSelectedBalance(null)} 
+            onSettleGlobal={handleSettleGlobal}
           />
         )}
       </AnimatePresence>
@@ -1566,7 +1626,7 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [] }) {
 }
 
 // ── Balance Breakdown Modal ───────────────────────────────────────────────────
-function BalanceBreakdownModal({ balanceObj, onClose }) {
+function BalanceBreakdownModal({ balanceObj, onClose, onSettleGlobal }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -1597,6 +1657,69 @@ function BalanceBreakdownModal({ balanceObj, onClose }) {
               </div>
             ))}
           </div>
+
+          {balanceObj.net_balance < 0 && (
+            <button 
+              onClick={() => onSettleGlobal(balanceObj)}
+              className="w-full mt-6 py-3 bg-gradient-to-r from-orange-500 to-rose-500 text-white font-bold rounded-xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/40 transition-all hover:-translate-y-0.5 active:translate-y-0"
+            >
+              Settle All
+            </button>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// ── Pending Settlements Modal ────────────────────────────────────────────────
+function PendingSettlementsModal({ settlements, onClose, onUpdate }) {
+  const handleApprove = async (id) => {
+    try {
+      await approveSettlement(id)
+      onUpdate()
+    } catch (e) { alert("Failed to approve.") }
+  }
+  const handleReject = async (id) => {
+    try {
+      await rejectSettlement(id)
+      onUpdate()
+    } catch (e) { alert("Failed to reject.") }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative w-full max-w-md bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+        <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-800/30">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-emerald-400" /> Pending Approvals
+          </h2>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-full transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-5 overflow-y-auto custom-scrollbar space-y-3">
+          {settlements.length === 0 ? (
+            <p className="text-center text-slate-500 py-8">No pending approvals.</p>
+          ) : (
+            settlements.map(s => (
+              <div key={s.id} className="p-4 bg-slate-800/50 rounded-2xl border border-slate-700">
+                <p className="text-sm text-slate-300">
+                  <strong className="text-white">{s.payer_name}</strong> sent you a payment of <strong className="text-emerald-400">£{s.amount.toFixed(2)}</strong>.
+                </p>
+                <div className="flex gap-2 mt-4">
+                  <button onClick={() => handleApprove(s.id)} className="flex-1 py-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 text-sm font-bold rounded-xl transition-colors hover:text-white border border-emerald-500/20">
+                    Approve
+                  </button>
+                  <button onClick={() => handleReject(s.id)} className="flex-1 py-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500 text-sm font-bold rounded-xl transition-colors hover:text-white border border-rose-500/20">
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </motion.div>
     </div>
