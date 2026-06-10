@@ -160,6 +160,22 @@ export const adminCreateUser = (adminId, name, email, password, isAdminFlag) =>
     body: JSON.stringify({ name, email, password }),
   }).then(handleResponse);
 
+// Admin extended endpoints
+export const fetchAdminStats = (adminId) =>
+  fetch(`${API_URL}/admin/stats?admin_id=${adminId}`).then(handleResponse).catch(() => null);
+
+export const fetchAdminGroups = (adminId) =>
+  fetch(`${API_URL}/admin/groups?admin_id=${adminId}`).then(handleResponse).catch(() => []);
+
+export const fetchAdminExpenses = (adminId, status = null) =>
+  fetch(`${API_URL}/admin/expenses?admin_id=${adminId}${status ? `&status=${status}` : ''}`).then(handleResponse).catch(() => []);
+
+export const fetchAdminSettlements = (adminId) =>
+  fetch(`${API_URL}/admin/settlements?admin_id=${adminId}`).then(handleResponse).catch(() => []);
+
+export const fetchAdminNotifications = (adminId, userId = null) =>
+  fetch(`${API_URL}/admin/notifications?admin_id=${adminId}${userId ? `&user_id=${userId}` : ''}`).then(handleResponse).catch(() => []);
+
 // WebSocket URL helper
 export const getWsUrl = (userId) => {
   const wsProtocol = isLocal ? 'ws' : 'wss';

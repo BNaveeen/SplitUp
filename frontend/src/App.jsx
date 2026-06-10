@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 // CACHE BUST FOR VITE FAST REFRESH
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Wallet, Users, LayoutGrid, LogOut, Loader2, CheckCircle2,
+  Wallet, Users, LayoutGrid, LogOut, Loader2, CheckCircle, CheckCircle2,
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell
@@ -14,7 +14,8 @@ import {
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
   fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements,
-  fetchInitiatedSettlements
+  fetchInitiatedSettlements,
+  fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -90,6 +91,27 @@ class ErrorBoundary extends React.Component {
     }
     return this.props.children
   }
+}
+
+// ── Notification Sound ────────────────────────────────────────────────────────
+function playNotificationSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+    const gain = ctx.createGain()
+    gain.connect(ctx.destination)
+    gain.gain.setValueAtTime(0, ctx.currentTime)
+    gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5)
+
+    [[880, 0], [1108, 0.12], [1320, 0.24]].forEach(([freq, when]) => {
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      osc.connect(gain)
+      osc.start(ctx.currentTime + when)
+      osc.stop(ctx.currentTime + when + 0.25)
+    })
+  } catch (_) {}
 }
 
 // ── Root ─────────────────────────────────────────────────────────────────────
@@ -251,6 +273,7 @@ function Dashboard({ user, onLogout }) {
             setNotifications(prev => [data, ...prev])
             setToastNotif(data)
             setTimeout(() => setToastNotif(null), 5000)
+            playNotificationSound()
           } else if (data.type === 'new_message') {
             window.dispatchEvent(new CustomEvent('ws_new_message', { detail: data }))
           }
@@ -290,20 +313,20 @@ function Dashboard({ user, onLogout }) {
   }, [loadData, user.id])
 
   const handleMarkRead = async (notifId, notif) => {
+    setShowNotifs(false)
     try {
       await markNotificationRead(notifId)
       setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, is_read: 1 } : n))
       if (notif?.group_id) {
         const matchedGroup = groups.find(g => g.id === notif.group_id)
-        if (matchedGroup) { 
-          setShowNotifs(false); 
-          setGroup(matchedGroup);
-          if (notif.expense_id) setFocusExpenseId(notif.expense_id);
+        if (matchedGroup) {
+          setGroup(matchedGroup)
+          if (notif.expense_id) setFocusExpenseId(notif.expense_id)
         }
       } else if (notif?.message) {
         const msg = notif.message.toLowerCase()
         const matchedGroup = groups.find(g => msg.includes(g.name.toLowerCase()))
-        if (matchedGroup) { setShowNotifs(false); setGroup(matchedGroup); setFocusExpenseId(null); }
+        if (matchedGroup) { setGroup(matchedGroup); setFocusExpenseId(null) }
       }
     } catch(err) { console.error(err) }
   }
@@ -373,9 +396,14 @@ function Dashboard({ user, onLogout }) {
                 )}
               </button>
               {showNotifs && (
-                <div className="absolute top-12 right-0 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden z-50">
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowNotifs(false)} />
+                  <div className="absolute top-12 right-0 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden z-50">
                   <div className="p-3 border-b border-slate-700/50 bg-slate-900/50 flex justify-between items-center">
                     <span className="font-semibold text-sm text-slate-200">Notifications</span>
+                    <button onClick={() => setShowNotifs(false)} className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   <div className="max-h-64 overflow-y-auto">
                     {notifications.length === 0 ? (
@@ -390,7 +418,8 @@ function Dashboard({ user, onLogout }) {
                       ))
                     )}
                   </div>
-                </div>
+                  </div>
+                </>
               )}
             </div>
             <button onClick={() => { setShowProfile(true); setShowNotifs(false) }} className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-xs font-bold text-white hover:ring-2 hover:ring-indigo-400 transition-all focus:outline-none`}>
@@ -642,12 +671,15 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     })
   }, [currentUser.id])
 
+  const [chatRefreshKey, setChatRefreshKey] = useState(0)
+
   const loadGroupData = useCallback(async () => {
     setLoading(true)
     const [e, b] = await Promise.all([fetchGroupExpenses(group.id), fetchGroupBalances(group.id)])
     setExpenses(e)
     setBalances(b)
     setLoading(false)
+    setChatRefreshKey(k => k + 1)
   }, [group.id])
 
   useEffect(() => { 
@@ -978,8 +1010,9 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                 </label>
               </div>
             )}
-            <ExpenseList 
-              expenses={expenses} 
+            <ExpenseList
+              expenses={expenses}
+              chatRefreshKey={chatRefreshKey}
               currentUser={currentUser} 
               allUsers={allUsers}
               showValidOnly={showValidOnly}
@@ -1026,132 +1059,445 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
 // ── Admin Dashboard ───────────────────────────────────────────────────────────
 function AdminDashboard({ currentUser, onBack }) {
-  const [activeTab, setActiveTab] = useState('users')
-  const [users, setAdminUsers] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab]           = useState('overview')
+  const [loading, setLoading]               = useState(true)
+  const [stats, setStats]                   = useState(null)
+  const [users, setUsers]                   = useState([])
+  const [adminGroups, setAdminGroups]       = useState([])
+  const [adminExpenses, setAdminExpenses]   = useState([])
+  const [adminSettlements, setAdminSettlements] = useState([])
+  const [adminNotifs, setAdminNotifs]       = useState([])
+  const [searchQuery, setSearchQuery]       = useState('')
+  const [expenseFilter, setExpenseFilter]   = useState('active')
+  const [settlementFilter, setSettlementFilter] = useState('')
+  const [notifUser, setNotifUser]           = useState(null)
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [newName, setNewName]               = useState('')
+  const [newEmail, setNewEmail]             = useState('')
+  const [newPassword, setNewPassword]       = useState('')
+  const [newIsAdmin, setNewIsAdmin]         = useState(false)
+  const [createLoading, setCreateLoading]   = useState(false)
+  const [createError, setCreateError]       = useState('')
 
-  useEffect(() => {
+  const TABS = [
+    { id: 'overview',      label: 'Overview',      icon: LayoutGrid },
+    { id: 'users',         label: 'Users',          icon: Users },
+    { id: 'groups',        label: 'Groups',         icon: Home },
+    { id: 'expenses',      label: 'Expenses',       icon: Receipt },
+    { id: 'settlements',   label: 'Settlements',    icon: CheckCircle2 },
+    { id: 'notifications', label: 'Notifications',  icon: Bell },
+  ]
+
+  const loadTab = useCallback(async (tab) => {
     setLoading(true)
-    fetchAdminUsers(currentUser.id).then(res => {
-      setAdminUsers(res)
-      setLoading(false)
-    })
-  }, [currentUser.id])
+    try {
+      if (tab === 'overview') {
+        const [s, u] = await Promise.all([fetchAdminStats(currentUser.id), fetchAdminUsers(currentUser.id)])
+        setStats(s); setUsers(u)
+      } else if (tab === 'users') {
+        setUsers(await fetchAdminUsers(currentUser.id))
+      } else if (tab === 'groups') {
+        setAdminGroups(await fetchAdminGroups(currentUser.id))
+      } else if (tab === 'expenses') {
+        setAdminExpenses(await fetchAdminExpenses(currentUser.id, expenseFilter || null))
+      } else if (tab === 'settlements') {
+        setAdminSettlements(await fetchAdminSettlements(currentUser.id))
+      } else if (tab === 'notifications') {
+        setAdminNotifs(await fetchAdminNotifications(currentUser.id, notifUser?.id || null))
+      }
+    } catch (e) { console.error(e) }
+    finally { setLoading(false) }
+  }, [currentUser.id, expenseFilter, notifUser])
+
+  useEffect(() => { loadTab(activeTab) }, [activeTab, expenseFilter, notifUser])
 
   const handleDeleteUser = async (id) => {
-    if (!confirm('Are you sure you want to delete this user? This cannot be undone.')) return
-    try {
-      await deleteAdminUser(id, currentUser.id)
-      setAdminUsers(prev => prev.filter(u => u.id !== id))
-    } catch (e) {
-      alert('Error deleting user: ' + e.message)
-    }
+    if (!confirm('Delete this user? This cannot be undone.')) return
+    try { await deleteAdminUser(id, currentUser.id); setUsers(p => p.filter(u => u.id !== id)) }
+    catch (e) { alert(e.message) }
   }
-  const [newName, setNewName] = useState('')
-  const [newEmail, setNewEmail] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [newIsAdmin, setNewIsAdmin] = useState(false)
-  const [createLoading, setCreateLoading] = useState(false)
-
   const handleToggleAdmin = async (id) => {
+    try { const u = await toggleAdminStatus(id, currentUser.id); setUsers(p => p.map(x => x.id === id ? u : x)) }
+    catch (e) { alert(e.message) }
+  }
+  const handleDeleteGroup = async (id) => {
+    if (!confirm('Delete this group?')) return
+    try { await deleteAdminGroup(id, currentUser.id); setAdminGroups(p => p.filter(g => g.id !== id)) }
+    catch (e) { alert(e.message) }
+  }
+  const handleCreateUser = async (e) => {
+    e.preventDefault(); setCreateLoading(true); setCreateError('')
     try {
-      const updatedUser = await toggleAdminStatus(id, currentUser.id)
-      setAdminUsers(prev => prev.map(u => u.id === id ? updatedUser : u))
-    } catch (e) {
-      alert('Error toggling admin: ' + e.message)
-    }
+      const u = await adminCreateUser(currentUser.id, newName, newEmail, newPassword, newIsAdmin)
+      setUsers(p => [...p, u])
+      setNewName(''); setNewEmail(''); setNewPassword(''); setNewIsAdmin(false); setShowCreateUser(false)
+    } catch (e) { setCreateError(e.message) }
+    finally { setCreateLoading(false) }
   }
 
-  const handleCreateUser = async (e) => {
-    e.preventDefault()
-    if (!newName || !newEmail || !newPassword) return
-    setCreateLoading(true)
-    try {
-      const newUser = await adminCreateUser(currentUser.id, newName, newEmail, newPassword, newIsAdmin)
-      setAdminUsers(prev => [...prev, newUser])
-      setNewName(''); setNewEmail(''); setNewPassword(''); setNewIsAdmin(false);
-      setActiveTab('users')
-    } catch (e) {
-      alert('Error creating user: ' + e.message)
-    } finally {
-      setCreateLoading(false)
-    }
-  }
+  const filteredUsers = users.filter(u =>
+    !searchQuery || u.name.toLowerCase().includes(searchQuery.toLowerCase()) || u.email.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+  const filteredSettlements = adminSettlements.filter(s => !settlementFilter || s.status === settlementFilter)
+  const unreadCount = adminNotifs.filter(n => !n.is_read).length
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6 pt-4">
-      <div className="flex items-center justify-between">
-        <button onClick={onBack} className="flex items-center text-slate-400 hover:text-white transition-colors">
-          <ArrowLeft className="h-5 w-5 mr-2" /> Back to Dashboard
-        </button>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex flex-col bg-[#1a1a2e]">
+      {/* Fixed header */}
+      <div className="bg-slate-900/90 backdrop-blur-xl border-b border-slate-700/40 sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto px-4">
+          <div className="h-14 flex items-center gap-3">
+            <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="h-8 w-8 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center shrink-0">
+              <Settings className="h-4 w-4 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h1 className="font-bold text-white text-sm leading-tight">Admin Portal</h1>
+              <p className="text-[10px] text-slate-500 leading-tight">Platform management · {currentUser.name}</p>
+            </div>
+            <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">Admin</span>
+          </div>
+          {/* Tab bar */}
+          <div className="flex overflow-x-auto scrollbar-hide pb-0">
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => { setActiveTab(t.id); setSearchQuery('') }}
+                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-all shrink-0 ${activeTab === t.id ? 'border-amber-500 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
+                <t.icon className="h-3.5 w-3.5" />{t.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-        <div className="p-6 border-b border-slate-800">
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Settings className="h-6 w-6 text-amber-400" /> Admin Portal
-          </h2>
-          <p className="text-sm text-slate-400 mt-1">Manage platform users and resources</p>
-        </div>
-
-        <div className="p-6">
-          <div className="flex gap-4 mb-6 border-b border-slate-800">
-            <button className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'users' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`} onClick={() => setActiveTab('users')}>
-              Users
-            </button>
-            <button className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'create' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-300'}`} onClick={() => setActiveTab('create')}>
-              Create User
-            </button>
+      <div className="flex-1 max-w-5xl w-full mx-auto px-4 py-6">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-64 gap-3">
+            <Loader2 className="animate-spin h-8 w-8 text-amber-500" />
+            <p className="text-xs text-slate-500">Loading {activeTab}…</p>
           </div>
+        ) : (
 
-          {loading ? (
-            <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-indigo-500" /></div>
-          ) : activeTab === 'users' ? (
-            <div className="space-y-3">
-              {users.map(u => (
-                <div key={u.id} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
-                  <div>
-                    <p className="text-sm font-medium text-slate-200">
-                      {u.name} {u.id === currentUser.id && <span className="text-xs text-indigo-400 ml-2">(You)</span>}
-                      {u.is_admin && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded ml-2 font-bold uppercase tracking-wider">Admin</span>}
-                    </p>
-                    <p className="text-xs text-slate-500">{u.email} • ID: {u.id}</p>
-                  </div>
-                  {u.id !== currentUser.id && (
-                    <div className="flex gap-2">
-                      <button onClick={() => handleToggleAdmin(u.id)} className={`p-2 rounded-lg transition-colors text-xs font-semibold ${u.is_admin ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-500'}`}>
-                        {u.is_admin ? 'Remove Admin' : 'Make Admin'}
-                      </button>
-                      <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+          /* ── Overview ── */
+          activeTab === 'overview' ? (
+            <div className="space-y-6">
+              {stats && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {[
+                    { label: 'Total Users',          value: stats.total_users,          icon: Users,       grad: 'from-indigo-500 to-purple-600',  bg: 'bg-indigo-500/10 border-indigo-500/20' },
+                    { label: 'Total Groups',         value: stats.total_groups,         icon: Home,        grad: 'from-emerald-500 to-teal-600',   bg: 'bg-emerald-500/10 border-emerald-500/20' },
+                    { label: 'Active Expenses',      value: stats.active_expenses,      icon: Receipt,     grad: 'from-sky-500 to-cyan-600',       bg: 'bg-sky-500/10 border-sky-500/20' },
+                    { label: 'Total Tracked (£)',    value: `£${stats.total_expense_amount.toFixed(0)}`, icon: TrendingUp, grad: 'from-amber-500 to-orange-600', bg: 'bg-amber-500/10 border-amber-500/20' },
+                    { label: 'Pending Settlements',  value: stats.pending_settlements,  icon: CheckCircle2, grad: 'from-rose-500 to-pink-600',     bg: 'bg-rose-500/10 border-rose-500/20' },
+                    { label: 'Unread Notifications', value: stats.unread_notifications, icon: Bell,        grad: 'from-violet-500 to-purple-600',  bg: 'bg-violet-500/10 border-violet-500/20' },
+                  ].map(c => (
+                    <div key={c.label} className={`${c.bg} border rounded-2xl p-4`}>
+                      <div className={`h-9 w-9 rounded-xl bg-gradient-to-br ${c.grad} flex items-center justify-center mb-3 shadow-lg`}>
+                        <c.icon className="h-4 w-4 text-white" />
+                      </div>
+                      <p className="text-2xl font-bold text-white">{c.value}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{c.label}</p>
                     </div>
-                  )}
+                  ))}
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-3 text-center">
+                {[
+                  { label: 'Deleted', value: stats?.deleted_expenses ?? 0, color: 'text-slate-400' },
+                  { label: 'Pending deletion', value: stats?.pending_deletions ?? 0, color: 'text-amber-400' },
+                  { label: 'Approved settlements', value: stats?.approved_settlements ?? 0, color: 'text-emerald-400' },
+                ].map(s => (
+                  <div key={s.label} className="bg-slate-800/40 border border-slate-700/40 rounded-xl py-3 px-2">
+                    <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">All Users</p>
+                  <span className="text-xs text-slate-500">{users.length} registered</span>
+                </div>
+                <div className="divide-y divide-slate-700/30 max-h-60 overflow-y-auto custom-scrollbar">
+                  {users.map(u => (
+                    <div key={u.id} className="px-5 py-3 flex items-center gap-3">
+                      <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                        {u.name.charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-200 truncate">{u.name}</p>
+                        <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                      </div>
+                      {u.is_admin && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">Admin</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+          /* ── Users ── */
+          ) : activeTab === 'users' ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 relative">
+                  <Search className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search by name or email…"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-500" />
+                </div>
+                <button onClick={() => { setShowCreateUser(s => !s); setCreateError('') }}
+                  className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-xl text-sm font-medium transition-colors shrink-0">
+                  <Plus className="h-4 w-4" /> Add User
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {showCreateUser && (
+                  <motion.form initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                    onSubmit={handleCreateUser}
+                    className="bg-slate-800/60 border border-amber-500/20 rounded-2xl p-5 space-y-3">
+                    <p className="text-sm font-semibold text-white">New User</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input type="text" placeholder="Full name" required value={newName} onChange={e => setNewName(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-500" />
+                      <input type="email" placeholder="Email address" required value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                        className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-500" />
+                    </div>
+                    <input type="password" placeholder="Password" required value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 placeholder-slate-500" />
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+                        <input type="checkbox" checked={newIsAdmin} onChange={e => setNewIsAdmin(e.target.checked)} className="accent-amber-500 w-4 h-4" />
+                        Grant Admin Privileges
+                      </label>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => { setShowCreateUser(false); setCreateError('') }}
+                          className="px-3 py-1.5 text-sm text-slate-400 hover:text-white bg-slate-700/50 rounded-lg transition-colors">Cancel</button>
+                        <button type="submit" disabled={createLoading}
+                          className="px-4 py-1.5 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors flex items-center gap-1.5">
+                          {createLoading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Create'}
+                        </button>
+                      </div>
+                    </div>
+                    {createError && <p className="text-red-400 text-xs">{createError}</p>}
+                  </motion.form>
+                )}
+              </AnimatePresence>
+
+              <p className="text-xs text-slate-500">{filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''}</p>
+              <div className="space-y-2">
+                {filteredUsers.map(u => (
+                  <motion.div key={u.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                    className="bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-3 flex items-center gap-3">
+                    <div className={`h-10 w-10 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white`}>
+                      {u.name.charAt(0)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-slate-200">{u.name}</p>
+                        {u.id === currentUser.id && <span className="text-[10px] text-indigo-400">(You)</span>}
+                        {u.is_admin && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-bold uppercase tracking-wider">Admin</span>}
+                      </div>
+                      <p className="text-xs text-slate-500">{u.email} · ID: {u.id}</p>
+                    </div>
+                    {u.id !== currentUser.id && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={() => handleToggleAdmin(u.id)}
+                          className={`text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors ${u.is_admin ? 'bg-slate-700 hover:bg-slate-600 text-slate-300' : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400'}`}>
+                          {u.is_admin ? 'Revoke' : 'Make Admin'}
+                        </button>
+                        <button onClick={() => handleDeleteUser(u.id)} className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+
+          /* ── Groups ── */
+          ) : activeTab === 'groups' ? (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-500">{adminGroups.length} group{adminGroups.length !== 1 ? 's' : ''}</p>
+              {adminGroups.map(g => (
+                <div key={g.id} className="bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-4">
+                  <div className="flex items-start gap-3">
+                    <div className={`h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br ${avatarColor(g.id)} flex items-center justify-center text-sm font-bold text-white`}>
+                      {g.name.charAt(0)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold text-slate-100">{g.name}</p>
+                        <button onClick={() => handleDeleteGroup(g.id)} className="p-1.5 text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors shrink-0">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="flex gap-4 text-xs text-slate-400 mt-1">
+                        <span>{g.member_count} member{g.member_count !== 1 ? 's' : ''}</span>
+                        <span>{g.expense_count} active expense{g.expense_count !== 1 ? 's' : ''}</span>
+                        <span className="text-slate-600">ID: {g.id}</span>
+                      </div>
+                      {g.members?.length > 0 && (
+                        <div className="flex gap-1.5 mt-2.5 flex-wrap">
+                          {g.members.map(m => (
+                            <span key={m.id} className="text-[10px] bg-slate-700/70 text-slate-300 px-2 py-0.5 rounded-full">{m.name}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-          ) : activeTab === 'create' ? (
-            <form onSubmit={handleCreateUser} className="space-y-4 max-w-sm">
-              <input type="text" placeholder="Name" value={newName} onChange={e => setNewName(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-indigo-500 outline-none" required />
-              <input type="email" placeholder="Email" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-indigo-500 outline-none" required />
-              <input type="password" placeholder="Password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:border-indigo-500 outline-none" required />
-              <label className="flex items-center gap-2 text-slate-300 cursor-pointer text-sm">
-                <input type="checkbox" checked={newIsAdmin} onChange={e => setNewIsAdmin(e.target.checked)} className="accent-indigo-500 w-4 h-4" />
-                Grant Admin Privileges
-              </label>
-              <button type="submit" disabled={createLoading} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-medium py-2.5 rounded-xl transition-colors">
-                {createLoading ? 'Creating...' : 'Create User'}
-              </button>
-            </form>
-          ) : null}
-        </div>
+
+          /* ── Expenses ── */
+          ) : activeTab === 'expenses' ? (
+            <div className="space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                {[['active', 'Active'], ['pending_deletion', 'Pending Deletion'], ['deleted', 'Deleted'], ['', 'All']].map(([val, label]) => (
+                  <button key={val} onClick={() => setExpenseFilter(val)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${expenseFilter === val ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">{adminExpenses.length} result{adminExpenses.length !== 1 ? 's' : ''}</p>
+              {adminExpenses.length === 0 ? (
+                <div className="text-center py-14 border border-dashed border-slate-700 rounded-2xl">
+                  <Receipt className="h-10 w-10 mx-auto mb-3 text-slate-600" />
+                  <p className="text-slate-500 font-medium">No expenses found</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {adminExpenses.map(e => (
+                    <div key={e.id} className={`bg-slate-800/40 border rounded-xl px-4 py-3 flex items-center gap-3 ${e.status === 'deleted' ? 'border-slate-700/20 opacity-50' : e.status !== 'active' ? 'border-amber-500/30' : 'border-slate-700/40'}`}>
+                      <div className="text-xl shrink-0">{categoryIcons[guessCategory(e.description)]}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-200 truncate">{e.description}</p>
+                        <p className="text-xs text-slate-500 truncate">
+                          Paid by {e.payer_name} · {e.splits.length} split{e.splits.length !== 1 ? 's' : ''}{e.group_id ? ` · group #${e.group_id}` : ''} · {e.date ? new Date(e.date).toLocaleDateString() : '—'}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-white">£{e.amount.toFixed(2)}</p>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${e.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : e.status === 'deleted' ? 'bg-slate-700 text-slate-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                          {e.status.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          /* ── Settlements ── */
+          ) : activeTab === 'settlements' ? (
+            <div className="space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                {[['', 'All'], ['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected']].map(([val, label]) => (
+                  <button key={val} onClick={() => setSettlementFilter(val)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${settlementFilter === val ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">{filteredSettlements.length} result{filteredSettlements.length !== 1 ? 's' : ''}</p>
+              {filteredSettlements.length === 0 ? (
+                <div className="text-center py-14 border border-dashed border-slate-700 rounded-2xl">
+                  <CheckCircle2 className="h-10 w-10 mx-auto mb-3 text-slate-600" />
+                  <p className="text-slate-500 font-medium">No settlements found</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {filteredSettlements.map(s => (
+                    <div key={s.id} className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-4 py-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-slate-200">
+                          <span className="font-semibold">{s.payer_name}</span>
+                          <span className="text-slate-500 mx-1.5">→</span>
+                          <span className="font-semibold">{s.payee_name}</span>
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">{new Date(s.created_at).toLocaleString()}{s.group_id ? ` · group #${s.group_id}` : ''}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-white">£{s.amount.toFixed(2)}</p>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : s.status === 'rejected' ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                          {s.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          /* ── Notifications ── */
+          ) : activeTab === 'notifications' ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex-1 min-w-[180px]">
+                  <select value={notifUser?.id || ''}
+                    onChange={e => setNotifUser(parseInt(e.target.value) ? users.find(u => u.id === parseInt(e.target.value)) || null : null)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 appearance-none">
+                    <option value="">All users</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+                  </select>
+                </div>
+                <button onClick={() => loadTab('notifications')}
+                  className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-slate-300 hover:text-white transition-colors shrink-0">
+                  <Activity className="h-3.5 w-3.5" /> Refresh
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+                <span>{adminNotifs.length} notification{adminNotifs.length !== 1 ? 's' : ''}</span>
+                {notifUser && <span>for <span className="text-amber-400 font-medium">{notifUser.name}</span></span>}
+                {unreadCount > 0 && <span className="text-rose-400 font-medium">{unreadCount} unread</span>}
+              </div>
+
+              {adminNotifs.length === 0 ? (
+                <div className="text-center py-16 border border-dashed border-slate-700 rounded-2xl">
+                  <Bell className="h-10 w-10 mx-auto mb-3 text-slate-600" />
+                  <p className="text-slate-500 font-medium">No notifications found</p>
+                  <p className="text-xs text-slate-600 mt-1">
+                    {notifUser ? `${notifUser.name} has no notifications yet — they haven't been involved in any transactions` : 'No notifications in the system yet'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {adminNotifs.map(n => (
+                    <div key={n.id} className={`rounded-xl px-4 py-3 border flex gap-3 items-start ${!n.is_read ? 'bg-indigo-500/5 border-indigo-500/20' : 'bg-slate-800/30 border-slate-700/30'}`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                          <span className="text-xs font-semibold text-amber-400">{n.user_name}</span>
+                          <span className="text-[10px] text-slate-600">ID: {n.user_id}</span>
+                          {!n.is_read && <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0"></span>}
+                        </div>
+                        <p className="text-xs text-slate-300">{n.message}</p>
+                        <p className="text-[10px] text-slate-500 mt-1">{new Date(n.created_at).toLocaleString()}</p>
+                      </div>
+                      <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full h-fit mt-0.5 ${!n.is_read ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-slate-700 text-slate-400'}`}>
+                        {n.is_read ? 'READ' : 'UNREAD'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          ) : null
+        )}
       </div>
     </motion.div>
   )
 }
 
 // ── Expense Chat ──────────────────────────────────────────────────────────────
-function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }) {
+function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt, refreshKey = 0 }) {
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
   const [text, setText] = useState('')
@@ -1163,6 +1509,10 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }
   useEffect(() => {
     fetchExpenseChat(expenseId).then(setMessages).finally(() => setLoading(false))
   }, [expenseId])
+
+  useEffect(() => {
+    if (refreshKey > 0) fetchExpenseChat(expenseId).then(setMessages)
+  }, [refreshKey])
 
   useEffect(() => {
     const handleWsMsg = (e) => {
@@ -1304,7 +1654,7 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt }
 }
 
 // ── Expense List (Splitwise-style) ────────────────────────────────────────────
-function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed, initiatedSettlements = [], onReload }) {
+function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed, initiatedSettlements = [], onReload, chatRefreshKey = 0 }) {
   const [expandedChatId, setExpandedChatId] = useState(focusExpenseId || null)
 
   useEffect(() => {
@@ -1415,12 +1765,14 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                             e.approvals && e.approvals.find(a => a.user_id === currentUser.id) ? (
                               (() => {
                                 const myVote = e.approvals.find(a => a.user_id === currentUser.id).approved;
-                                if (myVote === 1) return <span className="text-emerald-400 font-semibold border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 rounded">You voted: Approve</span>;
-                                if (myVote === -1) return <span className="text-rose-400 font-semibold border border-rose-500/30 bg-rose-500/10 px-2 py-1 rounded">You voted: Reject</span>;
+                                const cancelBtn = <button onClick={() => handleCancelDeletion(e.id)} className="bg-slate-700/60 text-slate-300 hover:bg-rose-500/20 hover:text-rose-400 px-2 py-1 rounded transition-colors font-medium">Cancel</button>;
+                                if (myVote === 1) return <><span className="text-emerald-400 font-semibold border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 rounded">You approved</span>{cancelBtn}</>;
+                                if (myVote === -1) return <><span className="text-rose-400 font-semibold border border-rose-500/30 bg-rose-500/10 px-2 py-1 rounded">You rejected</span>{cancelBtn}</>;
                                 return (
                                   <>
                                     <button onClick={() => onApproveDelete && onApproveDelete(e.id)} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-2 py-1 rounded transition-colors">Approve</button>
                                     <button onClick={() => onRejectDelete && onRejectDelete(e.id)} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 px-2 py-1 rounded transition-colors">Reject</button>
+                                    {cancelBtn}
                                   </>
                                 )
                               })()
@@ -1519,10 +1871,11 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                   </div>
 
                   {expandedChatId === e.id && (
-                    <ExpenseChat 
-                      expenseId={e.id} 
-                      currentUser={currentUser} 
+                    <ExpenseChat
+                      expenseId={e.id}
+                      currentUser={currentUser}
                       expenseUsers={allUsers}
+                      refreshKey={chatRefreshKey}
                     />
                   )}
                 </motion.div>
@@ -1793,8 +2146,9 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     return vals
   })
   const [loading, setLoading]         = useState(false)
-  const [success, setSuccess]         = useState(false)
   const [error, setError]             = useState('')
+  const [success, setSuccess]         = useState(false)
+  const submittingRef                 = useRef(false)
 
   // When group changes, default to all group members (only if not editing)
   useEffect(() => {
@@ -1816,9 +2170,12 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
   }
 
   const handleSubmit = async (e) => {
-    e.preventDefault(); setError('')
+    e.preventDefault()
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setError('')
     const numAmount = parseFloat(amount)
-    if (isNaN(numAmount) || numAmount <= 0) return setError('Please enter a valid amount')
+    if (isNaN(numAmount) || numAmount <= 0) { submittingRef.current = false; return setError('Please enter a valid amount') }
 
     let finalSplits = []
 
@@ -1912,8 +2269,8 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         await createExpense(payload)
       }
       setSuccess(true)
-      setTimeout(onSuccess, 1200)
-    } catch (err) { setError(err.message); setLoading(false) }
+      setTimeout(onSuccess, 900)
+    } catch (err) { setError(err.message); setLoading(false); submittingRef.current = false }
   }
 
   return (
@@ -1926,10 +2283,9 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
 
         {success ? (
           <div className="flex flex-col items-center justify-center py-16 gap-4">
-            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', delay: 0.1 }}
-              className="h-16 w-16 bg-emerald-500/20 rounded-full flex items-center justify-center">
+            <div className="h-16 w-16 bg-emerald-500/20 rounded-full flex items-center justify-center">
               <CheckCircle2 className="h-9 w-9 text-emerald-400" />
-            </motion.div>
+            </div>
             <p className="text-xl font-bold text-emerald-400">Expense {initialExpense ? 'Updated' : 'Added'}!</p>
             <p className="text-slate-400 text-sm">Successfully recorded and split.</p>
           </div>

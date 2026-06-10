@@ -310,6 +310,97 @@ def admin_delete_group(group_id: int, admin_id: int, db: Session = Depends(get_d
     db.commit()
     return {"message": "Group deleted"}
 
+@app.get("/admin/stats")
+def admin_get_stats(admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    from database import Settlement, Notification
+    from sqlalchemy import func
+    return {
+        "total_users": db.query(User).count(),
+        "total_groups": db.query(Group).count(),
+        "active_expenses": db.query(Expense).filter(Expense.status == "active").count(),
+        "pending_deletions": db.query(Expense).filter(Expense.status.in_(["pending_deletion", "approved_for_deletion"])).count(),
+        "deleted_expenses": db.query(Expense).filter(Expense.status == "deleted").count(),
+        "total_expense_amount": float(db.query(func.sum(Expense.amount)).filter(Expense.status == "active").scalar() or 0),
+        "total_settlements": db.query(Settlement).count(),
+        "pending_settlements": db.query(Settlement).filter(Settlement.status == "pending").count(),
+        "approved_settlements": db.query(Settlement).filter(Settlement.status == "approved").count(),
+        "total_notifications": db.query(Notification).count(),
+        "unread_notifications": db.query(Notification).filter(Notification.is_read == 0).count(),
+    }
+
+@app.get("/admin/groups")
+def admin_list_groups(admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    groups = db.query(Group).all()
+    result = []
+    for g in groups:
+        active_count = db.query(Expense).filter(Expense.group_id == g.id, Expense.status == "active").count()
+        result.append({
+            "id": g.id,
+            "name": g.name,
+            "member_count": len(g.members),
+            "expense_count": active_count,
+            "members": [{"id": m.id, "name": m.name} for m in g.members],
+        })
+    return result
+
+@app.get("/admin/expenses")
+def admin_list_expenses(admin_id: int, status: Optional[str] = None, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    q = db.query(Expense)
+    if status:
+        q = q.filter(Expense.status == status)
+    expenses = q.order_by(Expense.date.desc()).limit(200).all()
+    return [_format_expense(e) for e in expenses]
+
+@app.get("/admin/settlements")
+def admin_list_settlements(admin_id: int, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    from database import Settlement
+    settlements = db.query(Settlement).order_by(Settlement.created_at.desc()).limit(200).all()
+    return [SettlementResponse(
+        id=s.id,
+        payer_id=s.payer_id,
+        payer_name=s.payer.name if s.payer else "?",
+        payee_id=s.payee_id,
+        payee_name=s.payee.name if s.payee else "?",
+        amount=float(s.amount),
+        group_id=s.group_id,
+        expense_id=s.expense_id,
+        status=s.status,
+        created_at=s.created_at.isoformat()
+    ) for s in settlements]
+
+@app.get("/admin/notifications")
+def admin_list_notifications(admin_id: int, user_id: Optional[int] = None, db: Session = Depends(get_db)):
+    admin = db.query(User).filter(User.id == admin_id, User.is_admin == True).first()
+    if not admin:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    from database import Notification
+    q = db.query(Notification)
+    if user_id:
+        q = q.filter(Notification.user_id == user_id)
+    notifs = q.order_by(Notification.created_at.desc()).limit(500).all()
+    return [{
+        "id": n.id,
+        "user_id": n.user_id,
+        "user_name": n.user.name if n.user else "?",
+        "message": n.message,
+        "group_id": n.group_id,
+        "expense_id": n.expense_id,
+        "is_read": n.is_read,
+        "created_at": n.created_at.isoformat()
+    } for n in notifs]
+
 # ── WebSocket Endpoint ──────────────────────────────────────────────────────────
 
 @app.websocket("/ws/{user_id}")
@@ -336,7 +427,7 @@ def update_user(user_id: int, update_data: UserUpdate, db: Session = Depends(get
 @app.get("/users/{user_id}/notifications", response_model=List[NotificationResponse])
 def get_notifications(user_id: int, db: Session = Depends(get_db)):
     from database import Notification
-    notifs = db.query(Notification).filter(Notification.user_id == user_id).order_by(Notification.created_at.desc()).limit(30).all()
+    notifs = db.query(Notification).filter(Notification.user_id == user_id).order_by(Notification.created_at.desc()).all()
     return [
         {
             "id": n.id,
@@ -602,6 +693,11 @@ def split_expense(expense: ExpenseCreate, db: Session = Depends(get_db)):
     for uid in involved_users:
         if uid != expense.created_by_id:
             _add_notification(db, uid, f"You were added to a new expense: {new_expense.description}", expense_id=new_expense.id, group_id=new_expense.group_id)
+
+    split_users = {u.id: u.name for u in db.query(User).filter(User.id.in_([s.user_id for s in expense.splits])).all()}
+    split_names = ", ".join(split_users.get(s.user_id, f"User {s.user_id}") for s in expense.splits)
+    _add_system_message(db, new_expense.id, new_expense.created_by_id,
+        f"created this expense — £{float(new_expense.amount):.2f} paid by {payer.name}, split between: {split_names}")
     db.commit()
 
     return _format_expense(new_expense)
@@ -612,7 +708,7 @@ def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session =
     expense = db.query(Expense).filter(Expense.id == expense_id).first()
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
-    
+
     if expense.created_by_id != expense_update.created_by_id:
          raise HTTPException(status_code=403, detail="Only the creator can edit this expense")
 
@@ -620,10 +716,16 @@ def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session =
     if abs(total_split - expense_update.amount) > 0.02:
         raise HTTPException(status_code=400, detail=f"Split amounts ({total_split:.2f}) do not match expense ({expense_update.amount:.2f})")
 
+    # Capture old values for the changelog before overwriting
+    old_desc = expense.description
+    old_amount = float(expense.amount)
+    old_payer = db.query(User).filter(User.id == expense.payer_id).first()
+    old_payer_name = old_payer.name if old_payer else "Unknown"
+
     expense.description = expense_update.description
     expense.amount = expense_update.amount
     expense.payer_id = expense_update.payer_id
-    
+
     if expense_update.date:
         try:
             expense.date = datetime.fromisoformat(expense_update.date)
@@ -637,12 +739,28 @@ def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session =
 
     db.commit()
     db.refresh(expense)
-    
+
+    # Build a human-readable changelog
+    changes = []
+    if old_desc != expense.description:
+        changes.append(f'description: "{old_desc}" → "{expense.description}"')
+    if abs(old_amount - float(expense.amount)) > 0.005:
+        changes.append(f"amount: £{old_amount:.2f} → £{float(expense.amount):.2f}")
+    new_payer = db.query(User).filter(User.id == expense.payer_id).first()
+    new_payer_name = new_payer.name if new_payer else "Unknown"
+    if old_payer_name != new_payer_name:
+        changes.append(f"paid by: {old_payer_name} → {new_payer_name}")
+    split_user_map = {u.id: u.name for u in db.query(User).filter(User.id.in_([s.user_id for s in expense.splits])).all()}
+    new_split_names = ", ".join(split_user_map.get(s.user_id, f"User {s.user_id}") for s in expense.splits)
+    change_summary = "; ".join(changes) if changes else f"£{float(expense.amount):.2f} paid by {new_payer_name}"
+    _add_system_message(db, expense.id, expense.created_by_id,
+        f"updated this expense — {change_summary}, split between: {new_split_names}")
+
     # Notify users
     involved_users = {s.user_id for s in expense.splits}
     involved_users.add(expense.payer_id)
     for uid in involved_users:
-        if uid != expense_update.created_by_id: # using created_by_id as the editor
+        if uid != expense_update.created_by_id:
             _add_notification(db, uid, f"Expense updated: {expense.description}", expense_id=expense.id, group_id=expense.group_id)
     db.commit()
 
@@ -655,33 +773,37 @@ def delete_expense(expense_id: int, requester_id: int, db: Session = Depends(get
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
 
-    if expense.status == "pending_deletion":
-        raise HTTPException(status_code=400, detail="Expense is already pending deletion")
+    if expense.status in ("pending_deletion", "approved_for_deletion", "deleted"):
+        raise HTTPException(status_code=400, detail=f"Expense cannot be deleted (status: {expense.status})")
 
-    # Get all unique users involved in the expense
-    involved_user_ids = {split.user_id for split in expense.splits}
-    involved_user_ids.add(expense.payer_id)
+    # Get all unique users involved in the expense (guard against null payer_id)
+    involved_user_ids = {s.user_id for s in expense.splits if s.user_id is not None}
+    if expense.payer_id is not None:
+        involved_user_ids.add(expense.payer_id)
+    if not involved_user_ids:
+        involved_user_ids = {requester_id}
 
-    # If the requester is the only one involved, delete (soft delete) immediately
+    # If the requester is the only one involved, soft-delete immediately
     if len(involved_user_ids) == 1 and requester_id in involved_user_ids:
         expense.status = "deleted"
         db.commit()
         return {"message": "Expense deleted immediately"}
 
     expense.status = "pending_deletion"
-    
+
+    # Delete existing approvals first, flush so DELETEs hit the DB before INSERTs
     from database import ExpenseDeletionApproval
-    db.query(ExpenseDeletionApproval).filter(ExpenseDeletionApproval.expense_id == expense.id).delete()
-    
-    # Create approval requests for everyone involved
+    for appr in list(expense.approvals):
+        db.delete(appr)
+    db.flush()
+
+    # Create fresh approval records for everyone involved
     for uid in involved_user_ids:
-        approval = ExpenseDeletionApproval(expense_id=expense.id, user_id=uid, approved=1 if uid == requester_id else 0)
-        db.add(approval)
+        db.add(ExpenseDeletionApproval(expense_id=expense.id, user_id=uid, approved=1 if uid == requester_id else 0))
         if uid != requester_id:
             _add_notification(db, uid, f"Deletion requested for expense: {expense.description}", expense_id=expense.id, group_id=expense.group_id)
-            
+
     _add_system_message(db, expense.id, requester_id, "Requested deletion of this expense.")
-    
     db.commit()
     return {"message": "Deletion request initiated"}
 
@@ -727,7 +849,9 @@ def approve_deletion(expense_id: int, user_id: int, background_tasks: Background
         expense = db.query(Expense).filter(Expense.id == expense_id).first()
         if rejections > 0:
             expense.status = "active"
-            db.query(ExpenseDeletionApproval).filter(ExpenseDeletionApproval.expense_id == expense_id).delete()
+            for appr in list(expense.approvals):
+                db.delete(appr)
+            db.flush()
             _add_system_message(db, expense_id, user_id, "Deletion request was rejected and cancelled.")
             db.commit()
             return {"message": "Deletion was rejected by someone and cancelled"}
@@ -769,7 +893,9 @@ def reject_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)
     
     if pending_approvals == 0:
         expense.status = "active"
-        db.query(ExpenseDeletionApproval).filter(ExpenseDeletionApproval.expense_id == expense_id).delete()
+        for appr in list(expense.approvals):
+            db.delete(appr)
+        db.flush()
         _add_system_message(db, expense_id, user_id, "Rejected the deletion request. Deletion cancelled.")
         db.commit()
         return {"message": "Deletion rejected by at least one user and cancelled"}
@@ -790,7 +916,9 @@ def cancel_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Expense is not pending deletion")
         
     expense.status = "active"
-    db.query(ExpenseDeletionApproval).filter(ExpenseDeletionApproval.expense_id == expense_id).delete()
+    for appr in list(expense.approvals):
+        db.delete(appr)
+    db.flush()
     _add_system_message(db, expense_id, user_id, "Cancelled the deletion.")
     db.commit()
     return {"message": "Deletion cancelled"}
