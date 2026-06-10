@@ -409,34 +409,23 @@ function Dashboard({ user, onLogout }) {
     return <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} />
   }
 
-  if (selectedGroup) {
-    return (
-      <ErrorBoundary>
-        <GroupDetailView
-          group={selectedGroup}
-          currentUser={user}
-          allUsers={users}
-          allGroups={groups}
-          onBack={() => { setGroup(null); setFocusExpenseId(null); }}
-          onGroupUpdated={loadData}
-          focusExpenseId={focusExpenseId}
-          initiatedSettlements={initiatedSettlements}
-        />
-      </ErrorBoundary>
-    )
-  }
-
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-screen flex flex-col z-10 relative">
 
-      {/* Top nav */}
+      {/* Top nav — always visible */}
       <nav className="bg-slate-900/70 backdrop-blur-xl border-b border-slate-700/40 sticky top-0 z-50">
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="h-8 w-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <Wallet className="h-4 w-4 text-white" />
-            </div>
-            <span className="font-bold text-white text-lg">SplitWise</span>
+            {selectedGroup ? (
+              <button onClick={() => { setGroup(null); setFocusExpenseId(null); }} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+            ) : (
+              <div className="h-8 w-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+                <Wallet className="h-4 w-4 text-white" />
+              </div>
+            )}
+            <span className="font-bold text-white text-lg">{selectedGroup ? selectedGroup.name : 'SplitWise'}</span>
           </div>
           <div className="flex items-center gap-2">
             {pendingSettlements.length > 0 && (
@@ -498,50 +487,18 @@ function Dashboard({ user, onLogout }) {
 
       <AnimatePresence>
         {showProfile && (
-          <ProfileModal 
-            user={user} 
-            onClose={() => setShowProfile(false)} 
+          <ProfileModal
+            user={user}
+            onClose={() => setShowProfile(false)}
             onSave={(newUser) => {
-              // Update user object globally
               const saved = JSON.parse(localStorage.getItem('splitclone_user') || '{}');
               const updated = { ...saved, ...newUser };
               localStorage.setItem('splitclone_user', JSON.stringify(updated));
-              // Note: A full page reload or a global context update is usually better here, 
-              // but we can trigger a hard reload for simplicity since App.jsx only reads from local storage on mount.
               window.location.reload();
             }}
           />
         )}
       </AnimatePresence>
-
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
-        {loading ? (
-          <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8 text-indigo-500" /></div>
-        ) : (
-          <AnimatePresence mode="wait">
-            <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-
-              {activeTab === 'groups' && (
-                <GroupsTab
-                  groups={groups}
-                  currentUser={user}
-                  onSelectGroup={setGroup}
-                  onGroupCreated={loadData}
-                />
-              )}
-
-              {activeTab === 'activity' && (
-                <ActivityTab currentUser={user} groups={groups} />
-              )}
-
-              {activeTab === 'people' && (
-                <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} />
-              )}
-
-            </motion.div>
-          </AnimatePresence>
-        )}
-      </main>
 
       {/* Floating Toast Notification */}
       <AnimatePresence>
@@ -555,47 +512,84 @@ function Dashboard({ user, onLogout }) {
         )}
       </AnimatePresence>
 
-      {/* Bottom nav */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-xl border-t border-slate-700/40">
-        <div className="max-w-2xl mx-auto flex items-center justify-around h-16 px-4 relative">
-          {tabs.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl transition-all ${activeTab === tab.id ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
-              <tab.icon className={`h-5 w-5 ${activeTab === tab.id ? 'stroke-2' : ''}`} />
-              <span className="text-[10px] font-medium">{tab.label}</span>
-            </button>
-          ))}
-          {/* Floating Add button */}
-          <button
-            onClick={() => setAddExp(true)}
-            className="absolute -top-7 left-1/2 -translate-x-1/2 h-14 w-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/40 hover:scale-110 transition-transform active:scale-95">
-            <Plus className="h-7 w-7 text-white" />
-          </button>
-        </div>
-      </div>
-
-      {/* Add Expense Modal */}
-      <AnimatePresence>
-        {showAddExpense && (
-          <AddExpenseModal
-            currentUser={user}
-            users={users}
-            groups={groups}
-            onClose={() => setAddExp(false)}
-            onSuccess={handleExpenseAdded}
-          />
-        )}
-      </AnimatePresence>
-      
       <AnimatePresence>
         {showPendingSettlements && (
-          <PendingSettlementsModal 
-            settlements={pendingSettlements} 
-            onClose={() => setShowPendingSettlements(false)} 
+          <PendingSettlementsModal
+            settlements={pendingSettlements}
+            onClose={() => setShowPendingSettlements(false)}
             onUpdate={loadData}
           />
         )}
       </AnimatePresence>
+
+      {/* Main content: group view or dashboard tabs */}
+      {selectedGroup ? (
+        <ErrorBoundary>
+          <GroupDetailView
+            group={selectedGroup}
+            currentUser={user}
+            allUsers={users}
+            allGroups={groups}
+            onBack={() => { setGroup(null); setFocusExpenseId(null); }}
+            onGroupUpdated={loadData}
+            focusExpenseId={focusExpenseId}
+            initiatedSettlements={initiatedSettlements}
+          />
+        </ErrorBoundary>
+      ) : (
+        <>
+          <main className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
+            {loading ? (
+              <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8 text-indigo-500" /></div>
+            ) : (
+              <AnimatePresence mode="wait">
+                <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+                  {activeTab === 'groups' && (
+                    <GroupsTab groups={groups} currentUser={user} onSelectGroup={setGroup} onGroupCreated={loadData} />
+                  )}
+                  {activeTab === 'activity' && (
+                    <ActivityTab currentUser={user} groups={groups} />
+                  )}
+                  {activeTab === 'people' && (
+                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} />
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            )}
+          </main>
+
+          {/* Bottom nav */}
+          <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-xl border-t border-slate-700/40">
+            <div className="max-w-2xl mx-auto flex items-center justify-around h-16 px-4 relative">
+              {tabs.map(tab => (
+                <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                  className={`flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl transition-all ${activeTab === tab.id ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
+                  <tab.icon className={`h-5 w-5 ${activeTab === tab.id ? 'stroke-2' : ''}`} />
+                  <span className="text-[10px] font-medium">{tab.label}</span>
+                </button>
+              ))}
+              <button
+                onClick={() => setAddExp(true)}
+                className="absolute -top-7 left-1/2 -translate-x-1/2 h-14 w-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/40 hover:scale-110 transition-transform active:scale-95">
+                <Plus className="h-7 w-7 text-white" />
+              </button>
+            </div>
+          </div>
+
+          {/* Add Expense Modal */}
+          <AnimatePresence>
+            {showAddExpense && (
+              <AddExpenseModal
+                currentUser={user}
+                users={users}
+                groups={groups}
+                onClose={() => setAddExp(false)}
+                onSuccess={handleExpenseAdded}
+              />
+            )}
+          </AnimatePresence>
+        </>
+      )}
     </motion.div>
   )
 }
@@ -920,56 +914,6 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
   return (
     <motion.div initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 30 }} className="min-h-screen flex flex-col z-10 relative">
-      {/* Header */}
-      <div className="bg-slate-900/80 backdrop-blur-xl border-b border-slate-700/40 sticky top-0 z-50">
-        <div className="max-w-2xl mx-auto px-4">
-          <div className="flex items-center gap-3 h-14">
-            <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <div className={`h-8 w-8 shrink-0 rounded-lg bg-gradient-to-br ${avatarColor(group.id)} flex items-center justify-center text-sm font-bold text-white`}>
-              {group.name.charAt(0)}
-            </div>
-            <div className="flex-1 min-w-0">
-              {editingGroupName ? (
-                <form
-                  className="flex items-center gap-1.5"
-                  onSubmit={async (ev) => {
-                    ev.preventDefault()
-                    const trimmed = groupNameDraft.trim()
-                    if (!trimmed || trimmed === group.name) { setEditingGroupName(false); return }
-                    try {
-                      await renameGroup(group.id, trimmed, currentUser.id)
-                      await onGroupUpdated()
-                      setEditingGroupName(false)
-                    } catch (err) { alert(err.message) }
-                  }}
-                >
-                  <input
-                    autoFocus
-                    value={groupNameDraft}
-                    onChange={e => setGroupNameDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Escape') { setGroupNameDraft(group.name); setEditingGroupName(false) } }}
-                    className="flex-1 bg-slate-800 border border-indigo-500 text-white text-sm font-bold rounded-lg px-2 py-0.5 outline-none min-w-0"
-                  />
-                  <button type="submit" className="text-[10px] px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shrink-0">Save</button>
-                  <button type="button" onClick={() => { setGroupNameDraft(group.name); setEditingGroupName(false) }} className="text-[10px] px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg shrink-0">Cancel</button>
-                </form>
-              ) : (
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <h1 className="font-bold text-white truncate">{group.name}</h1>
-                  {isSuperAdmin && (
-                    <button onClick={() => { setGroupNameDraft(group.name); setEditingGroupName(true) }} className="shrink-0 p-0.5 text-slate-500 hover:text-indigo-400 transition-colors" title="Rename group">
-                      <Edit2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              )}
-              <p className="text-xs text-slate-500">{members.length} member{members.length !== 1 ? 's' : ''}</p>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <div className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
 
@@ -1002,10 +946,34 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
         {/* Members row */}
         <div className="mt-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-3" onClick={() => memberActionsId && setMemberActionsId(null)}>
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Members</p>
-              {myRole === 'super_admin' && <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Super Admin</span>}
-              {myRole === 'admin' && <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Admin</span>}
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider shrink-0">Members</p>
+              {myRole === 'super_admin' && <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">Super Admin</span>}
+              {myRole === 'admin' && <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">Admin</span>}
+              {isSuperAdmin && (
+                editingGroupName ? (
+                  <form className="flex items-center gap-1 flex-1 min-w-0" onSubmit={async (ev) => {
+                    ev.preventDefault()
+                    const trimmed = groupNameDraft.trim()
+                    if (!trimmed || trimmed === group.name) { setEditingGroupName(false); return }
+                    try {
+                      await renameGroup(group.id, trimmed, currentUser.id)
+                      await onGroupUpdated()
+                      setEditingGroupName(false)
+                    } catch (err) { alert(err.message) }
+                  }}>
+                    <input autoFocus value={groupNameDraft} onChange={e => setGroupNameDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Escape') { setGroupNameDraft(group.name); setEditingGroupName(false) } }}
+                      className="flex-1 bg-slate-700 border border-indigo-500 text-white text-xs rounded-lg px-2 py-0.5 outline-none min-w-0" />
+                    <button type="submit" className="text-[10px] px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded shrink-0">Save</button>
+                    <button type="button" onClick={() => { setGroupNameDraft(group.name); setEditingGroupName(false) }} className="text-[10px] px-1.5 py-0.5 bg-slate-600 text-slate-300 rounded shrink-0">✕</button>
+                  </form>
+                ) : (
+                  <button onClick={() => { setGroupNameDraft(group.name); setEditingGroupName(true) }} className="shrink-0 p-0.5 text-slate-600 hover:text-indigo-400 transition-colors" title="Rename group">
+                    <Edit2 className="h-3 w-3" />
+                  </button>
+                )
+              )}
             </div>
             {isGroupAdmin && (
               <button onClick={() => { setShowAddMember(s => { if (s) resetMemberForm(); return !s }) }}

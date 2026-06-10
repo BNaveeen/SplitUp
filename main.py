@@ -1097,6 +1097,29 @@ async def _deletion_scheduler():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(_deletion_scheduler())
+    # One-time cleanup: remove fake "Payment" expenses created by the old approve_settlement code.
+    # Those were auto-created with description="Payment" and payer_id != created_by_id.
+    # Legitimate "Payment" expenses typed by users typically have the same person as payer and creator.
+    db = SessionLocal()
+    try:
+        from database import ExpenseSplit as ES, ExpenseMessage as EM, Settlement as St
+        fake = db.query(Expense).filter(
+            Expense.description == "Payment",
+            Expense.payer_id != Expense.created_by_id
+        ).all()
+        for exp in fake:
+            db.query(ES).filter(ES.expense_id == exp.id).delete()
+            db.query(EM).filter(EM.expense_id == exp.id).delete()
+            # Detach any settlements that pointed to this fake expense
+            db.query(St).filter(St.expense_id == exp.id).update({"expense_id": None})
+            db.flush()
+            db.delete(exp)
+        if fake:
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 @app.post("/expenses/{expense_id}/approve_deletion")
 def approve_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)):
