@@ -1132,7 +1132,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
             <ExpenseList
               expenses={expenses}
               chatRefreshKey={chatRefreshKey}
-              currentUser={currentUser} 
+              currentUser={currentUser}
               allUsers={allUsers}
               showValidOnly={showValidOnly}
               onEditExpense={setEditingExpense}
@@ -1144,6 +1144,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               markChatViewed={markChatViewed}
               initiatedSettlements={initiatedSettlements}
               onReload={loadGroupData}
+              myRole={myRole}
             />
           </>
         ) : (
@@ -1773,7 +1774,7 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt, 
 }
 
 // ── Expense List (Splitwise-style) ────────────────────────────────────────────
-function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed, initiatedSettlements = [], onReload, chatRefreshKey = 0 }) {
+function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed, initiatedSettlements = [], onReload, chatRefreshKey = 0, myRole = 'member' }) {
   const [expandedChatId, setExpandedChatId] = useState(focusExpenseId || null)
 
   useEffect(() => {
@@ -1880,25 +1881,30 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                       <div className="flex justify-between items-center">
                         <span>{e.status === 'approved_for_deletion' ? 'Deletion approved! Will delete in 10 mins.' : 'Deletion pending approval...'}</span>
                         <div className="flex gap-2">
-                          {e.status === 'pending_deletion' ? (
-                            e.approvals && e.approvals.find(a => a.user_id === currentUser.id) ? (
-                              (() => {
-                                const myVote = e.approvals.find(a => a.user_id === currentUser.id).approved;
-                                const cancelBtn = <button onClick={() => handleCancelDeletion(e.id)} className="bg-slate-700/60 text-slate-300 hover:bg-rose-500/20 hover:text-rose-400 px-2 py-1 rounded transition-colors font-medium">Cancel</button>;
-                                if (myVote === 1) return <><span className="text-emerald-400 font-semibold border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 rounded">You approved</span>{cancelBtn}</>;
-                                if (myVote === -1) return <><span className="text-rose-400 font-semibold border border-rose-500/30 bg-rose-500/10 px-2 py-1 rounded">You rejected</span>{cancelBtn}</>;
-                                return (
-                                  <>
-                                    <button onClick={() => onApproveDelete && onApproveDelete(e.id)} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-2 py-1 rounded transition-colors">Approve</button>
-                                    <button onClick={() => onRejectDelete && onRejectDelete(e.id)} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 px-2 py-1 rounded transition-colors">Reject</button>
-                                    {cancelBtn}
-                                  </>
-                                )
-                              })()
-                            ) : null
-                          ) : (
-                            <button onClick={() => handleCancelDeletion(e.id)} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 px-2 py-1 rounded transition-colors font-medium">Cancel Deletion</button>
-                          )}
+                          {(() => {
+                            const canCancel = myRole === 'super_admin' || myRole === 'admin' || currentUser.id === e.created_by_id
+                            const cancelBtn = canCancel
+                              ? <button onClick={() => handleCancelDeletion(e.id)} className="bg-slate-700/60 text-slate-300 hover:bg-rose-500/20 hover:text-rose-400 px-2 py-1 rounded transition-colors font-medium">Cancel</button>
+                              : null
+                            if (e.status === 'pending_deletion') {
+                              const myApproval = e.approvals && e.approvals.find(a => a.user_id === currentUser.id)
+                              if (!myApproval) return null
+                              const myVote = myApproval.approved
+                              if (myVote === 1) return <><span className="text-emerald-400 font-semibold border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 rounded">You approved</span>{cancelBtn}</>
+                              if (myVote === -1) return <><span className="text-rose-400 font-semibold border border-rose-500/30 bg-rose-500/10 px-2 py-1 rounded">You rejected</span>{cancelBtn}</>
+                              return (
+                                <>
+                                  <button onClick={() => onApproveDelete && onApproveDelete(e.id)} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-2 py-1 rounded transition-colors">Approve</button>
+                                  <button onClick={() => onRejectDelete && onRejectDelete(e.id)} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 px-2 py-1 rounded transition-colors">Reject</button>
+                                  {cancelBtn}
+                                </>
+                              )
+                            }
+                            // approved_for_deletion
+                            return canCancel
+                              ? <button onClick={() => handleCancelDeletion(e.id)} className="bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 px-2 py-1 rounded transition-colors font-medium">Cancel Deletion</button>
+                              : null
+                          })()}
                         </div>
                       </div>
                       {e.status === 'pending_deletion' && e.approvals && (
