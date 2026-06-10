@@ -2404,23 +2404,43 @@ function PendingSettlementsModal({ settlements, onClose, onUpdate }) {
 // ── Receipt OCR helpers ────────────────────────────────────────────────────────
 function parseReceiptText(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+
+  // ── Amount ──────────────────────────────────────────────────────────────────
   let amount = null
-  // Search bottom-up for a total line
   const totalRx = /(?:grand\s+)?total[:\s£$]*[\s]*([\d,]+\.?\d*)|amount\s+(?:due|paid|to\s+pay)[:\s£$]*([\d,]+\.?\d*)/i
-  const poundRx = /[£$]([\d,]+\.\d{2})/
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = lines[i].match(totalRx)
     if (m) { const v = parseFloat((m[1] || m[2]).replace(',', '')); if (v > 0 && v < 10000) { amount = v.toFixed(2); break } }
   }
   if (!amount) {
-    // Fallback: find the largest currency value in the text
     let max = 0
     text.match(/[£$]([\d,]+\.\d{2})/g)?.forEach(m => { const v = parseFloat(m.replace(/[£$,]/g, '')); if (v > max && v < 10000) max = v })
     if (max > 0) amount = max.toFixed(2)
   }
-  // Description: first meaningful line (skip short/all-caps receipt headers)
-  const desc = lines.find(l => l.length > 3 && l.length < 60) || ''
-  // Date
+
+  // ── Store name (title at the very top of the receipt) ───────────────────────
+  // Receipts print the merchant name first, large + bold.
+  // Skip lines that look like addresses, phone numbers, postcodes, dates, URLs.
+  const isAddress   = l => /^\d+\s+\w.*(st|rd|ave|lane|road|street|drive|close|way)\b/i.test(l)
+  const isPhone     = l => /^[\d\s\-\+\(\)\.]{7,}$/.test(l) || /^tel[\s:]/i.test(l)
+  const isPostcode  = l => /\b[A-Z]{1,2}\d{1,2}\s*\d[A-Z]{2}\b/i.test(l)
+  const isDate      = l => /\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/.test(l)
+  const isUrl       = l => /www\.|\.com|\.co\.uk/i.test(l)
+  const isVatReg    = l => /^(vat|reg|no\.?|#|receipt|invoice|order)/i.test(l)
+  const isJunkLine  = l =>
+    l.length < 3 || l.length > 52 ||
+    /^\d+$/.test(l) ||
+    isPhone(l) || isPostcode(l) || isDate(l) || isUrl(l) || isAddress(l) || isVatReg(l)
+
+  // Look only at the first 10 lines — the store name is always at the top
+  const titleLine = lines.slice(0, 10).find(l => !isJunkLine(l) && /[a-zA-Z]{2,}/.test(l)) || ''
+
+  // If it's ALL CAPS convert to Title Case for readability
+  const desc = /^[^a-z]+$/.test(titleLine)
+    ? titleLine.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+    : titleLine
+
+  // ── Date ────────────────────────────────────────────────────────────────────
   let date = new Date().toISOString().split('T')[0]
   const dateRx = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/
   for (const l of lines) {
@@ -2431,6 +2451,7 @@ function parseReceiptText(text) {
       if (!isNaN(d)) { date = d.toISOString().split('T')[0]; break }
     }
   }
+
   return { amount, description: desc, date }
 }
 
