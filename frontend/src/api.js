@@ -18,8 +18,8 @@ export const fetchUserGroups = (userId) =>
 export const fetchUserExpenses = (userId) =>
   fetch(`${API_URL}/users/${userId}/expenses/`).then(handleResponse).catch(() => []);
 
-export const fetchGroupExpenses = (groupId) =>
-  fetch(`${API_URL}/groups/${groupId}/expenses/`).then(handleResponse).catch(() => []);
+export const fetchGroupExpenses = (groupId, requesterId = null) =>
+  fetch(`${API_URL}/groups/${groupId}/expenses/${requesterId ? `?requester_id=${requesterId}` : ''}`).then(handleResponse);
 
 export const fetchGroupBalances = (groupId) =>
   fetch(`${API_URL}/groups/${groupId}/balances/`).then(handleResponse).catch(() => []);

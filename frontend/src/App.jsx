@@ -741,15 +741,27 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
   const [chatRefreshKey, setChatRefreshKey] = useState(0)
 
+  const [disabledInGroup, setDisabledInGroup] = useState(false)
+
   const loadGroupData = useCallback(async () => {
     setLoading(true)
-    const [e, b, ms] = await Promise.all([fetchGroupExpenses(group.id), fetchGroupBalances(group.id), fetchGroupMemberships(group.id)])
-    setExpenses(e)
-    setBalances(b)
-    setMemberships(ms)
+    setDisabledInGroup(false)
+    const [expResult, b, ms] = await Promise.allSettled([
+      fetchGroupExpenses(group.id, currentUser.id),
+      fetchGroupBalances(group.id),
+      fetchGroupMemberships(group.id)
+    ])
+    if (expResult.status === 'rejected') {
+      setDisabledInGroup(true)
+      setExpenses([])
+    } else {
+      setExpenses(expResult.value)
+    }
+    if (b.status === 'fulfilled') setBalances(b.value)
+    if (ms.status === 'fulfilled') setMemberships(ms.value)
     setLoading(false)
     setChatRefreshKey(k => k + 1)
-  }, [group.id])
+  }, [group.id, currentUser.id])
 
   useEffect(() => { 
     loadGroupData()
@@ -1049,9 +1061,12 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                               <UserX className="h-3.5 w-3.5" /> {ms.is_active ? 'Deactivate' : 'Reactivate'}
                             </button>
                             {/* Remove from group */}
-                            <button onClick={() => handleRemoveMember(ms.user_id, ms.user_name)}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors">
+                            <button onClick={() => !ms.has_transactions && handleRemoveMember(ms.user_id, ms.user_name)}
+                              disabled={ms.has_transactions}
+                              title={ms.has_transactions ? 'Cannot remove — member has existing transactions in this group' : undefined}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors ${ms.has_transactions ? 'text-slate-600 cursor-not-allowed' : 'text-rose-400 hover:bg-rose-500/10'}`}>
                               <Trash2 className="h-3.5 w-3.5" /> Remove from group
+                              {ms.has_transactions && <span className="ml-auto text-[9px] text-slate-600 font-normal">has transactions</span>}
                             </button>
                           </motion.div>
                         )}
@@ -1187,6 +1202,14 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
         {loading ? (
           <div className="flex justify-center py-12"><Loader2 className="animate-spin h-7 w-7 text-indigo-500" /></div>
+        ) : disabledInGroup && activeSection === 'expenses' ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-4">
+            <div className="h-14 w-14 bg-amber-500/10 rounded-full flex items-center justify-center">
+              <UserX className="h-7 w-7 text-amber-400" />
+            </div>
+            <p className="text-amber-300 font-semibold text-sm">Your access to this group is disabled</p>
+            <p className="text-slate-500 text-xs max-w-xs">An admin has temporarily restricted your access. You won't see any expenses until you're re-enabled.</p>
+          </div>
         ) : activeSection === 'expenses' ? (
           <>
             {expenses.some(e => e.status === 'deleted') && (
@@ -2378,6 +2401,54 @@ function PendingSettlementsModal({ settlements, onClose, onUpdate }) {
   )
 }
 
+// ── Receipt OCR helpers ────────────────────────────────────────────────────────
+function parseReceiptText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  let amount = null
+  // Search bottom-up for a total line
+  const totalRx = /(?:grand\s+)?total[:\s£$]*[\s]*([\d,]+\.?\d*)|amount\s+(?:due|paid|to\s+pay)[:\s£$]*([\d,]+\.?\d*)/i
+  const poundRx = /[£$]([\d,]+\.\d{2})/
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(totalRx)
+    if (m) { const v = parseFloat((m[1] || m[2]).replace(',', '')); if (v > 0 && v < 10000) { amount = v.toFixed(2); break } }
+  }
+  if (!amount) {
+    // Fallback: find the largest currency value in the text
+    let max = 0
+    text.match(/[£$]([\d,]+\.\d{2})/g)?.forEach(m => { const v = parseFloat(m.replace(/[£$,]/g, '')); if (v > max && v < 10000) max = v })
+    if (max > 0) amount = max.toFixed(2)
+  }
+  // Description: first meaningful line (skip short/all-caps receipt headers)
+  const desc = lines.find(l => l.length > 3 && l.length < 60) || ''
+  // Date
+  let date = new Date().toISOString().split('T')[0]
+  const dateRx = /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/
+  for (const l of lines) {
+    const m = l.match(dateRx)
+    if (m) {
+      const y = m[3].length === 2 ? '20' + m[3] : m[3]
+      const d = new Date(`${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`)
+      if (!isNaN(d)) { date = d.toISOString().split('T')[0]; break }
+    }
+  }
+  return { amount, description: desc, date }
+}
+
+async function runReceiptOCR(file) {
+  const { createWorker } = await import('tesseract.js')
+  const worker = await createWorker('eng', 1, {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/worker.min.js',
+    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6/tesseract-core-simd-lstm.wasm.js',
+  })
+  try {
+    const { data: { text } } = await worker.recognize(file)
+    return parseReceiptText(text)
+  } finally {
+    await worker.terminate()
+  }
+}
+
 // ── Add Expense Modal ─────────────────────────────────────────────────────────
 function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialExpense, onClose, onSuccess }) {
   const [description, setDescription] = useState(initialExpense?.description || '')
@@ -2397,7 +2468,28 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
   const [success, setSuccess]         = useState(false)
+  const [scanning, setScanning]       = useState(false)
+  const [scanError, setScanError]     = useState('')
+  const scanInputRef                  = useRef(null)
   const submittingRef                 = useRef(false)
+
+  const handleScanReceipt = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setScanning(true); setScanError('')
+    try {
+      const result = await runReceiptOCR(file)
+      if (result.amount) setAmount(result.amount)
+      if (result.description) setDescription(prev => prev || result.description)
+      if (result.date) setDate(result.date)
+      if (!result.amount) setScanError('Could not detect a total — please enter the amount manually.')
+    } catch (err) {
+      setScanError('Scan failed. Try a clearer photo.')
+    } finally {
+      setScanning(false)
+      e.target.value = ''
+    }
+  }
 
   // When group changes, default to all group members (only if not editing)
   useEffect(() => {
@@ -2543,12 +2635,30 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
             {/* Modal header */}
             <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md z-10 flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
               <h3 className="font-bold text-white text-lg">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
-              <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {!initialExpense && (
+                  <>
+                    <input ref={scanInputRef} type="file" accept="image/*" capture="environment"
+                      className="hidden" onChange={handleScanReceipt} />
+                    <button type="button" onClick={() => scanInputRef.current?.click()}
+                      disabled={scanning}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait">
+                      {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>📷</span>}
+                      {scanning ? 'Scanning…' : 'Scan Receipt'}
+                    </button>
+                  </>
+                )}
+                <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar">
+
+              {scanError && (
+                <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{scanError}</div>
+              )}
 
               {/* Description */}
               <div>

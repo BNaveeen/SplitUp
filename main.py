@@ -131,6 +131,7 @@ class MembershipResponse(BaseModel):
     user_email: str
     role: str          # 'super_admin' | 'admin' | 'member'
     is_active: bool
+    has_transactions: bool = False
 
 class UpdateRoleRequest(BaseModel):
     role: str          # 'super_admin' | 'admin' | 'member'
@@ -686,11 +687,20 @@ def add_group_member_by_id(group_id: int, req: AddMemberByIdRequest, db: Session
     return group
 
 @app.get("/groups/{group_id}/expenses/", response_model=List[ExpenseResponse])
-def get_group_expenses(group_id: int, db: Session = Depends(get_db)):
-    """Get all expenses for a group, newest first."""
+def get_group_expenses(group_id: int, requester_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Get all expenses for a group, newest first. Returns 403 if requester is inactive in the group."""
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+    if requester_id:
+        row = db.execute(
+            group_members.select().where(
+                (group_members.c.group_id == group_id) &
+                (group_members.c.user_id == requester_id)
+            )
+        ).first()
+        if row and not bool(row.is_active):
+            raise HTTPException(status_code=403, detail="Your access to this group is currently disabled")
     expenses = (
         db.query(Expense)
         .filter(Expense.group_id == group_id)
@@ -802,12 +812,22 @@ def get_group_memberships(group_id: int, db: Session = Depends(get_db)):
     for row in rows:
         user = db.query(User).filter(User.id == row.user_id).first()
         if user:
+            in_split = (
+                db.query(ExpenseSplit)
+                .join(Expense, Expense.id == ExpenseSplit.expense_id)
+                .filter(Expense.group_id == group_id, ExpenseSplit.user_id == user.id)
+                .first()
+            )
+            is_payer = db.query(Expense).filter(
+                Expense.group_id == group_id, Expense.payer_id == user.id
+            ).first()
             result.append(MembershipResponse(
                 user_id=user.id,
                 user_name=user.name,
                 user_email=user.email,
                 role=row.role or "member",
                 is_active=bool(row.is_active),
+                has_transactions=bool(in_split or is_payer),
             ))
     return result
 
