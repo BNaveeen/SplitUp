@@ -24,9 +24,36 @@ import {
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 function formatDate(isoString) {
-  if (!isoString) return { month: '—', day: '—' }
+  if (!isoString) return { month: '—', day: '—', year: '—' }
   const d = new Date(isoString)
-  return { month: MONTH_SHORT[d.getMonth()], day: String(d.getDate()) }
+  return { month: MONTH_SHORT[d.getMonth()], day: String(d.getDate()), year: String(d.getFullYear()) }
+}
+
+function formatTimestamp(isoString) {
+  if (!isoString) return ''
+  const d = new Date(isoString)
+  const now = new Date()
+  const diffMs = now - d
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function chatDateLabel(isoString) {
+  if (!isoString) return ''
+  const d = new Date(isoString)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterday = new Date(today - 86400000)
+  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  if (msgDay.getTime() === today.getTime()) return 'Today'
+  if (msgDay.getTime() === yesterday.getTime()) return 'Yesterday'
+  return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })
 }
 
 function todayISO() {
@@ -1717,16 +1744,37 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt, 
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-700/50 bg-slate-900/30 rounded-xl px-2 py-2">
-      <div ref={scrollRef} className="h-48 overflow-y-auto mb-3 space-y-3 pr-2 custom-scrollbar flex flex-col">
+      <div ref={scrollRef} className="h-48 overflow-y-auto mb-3 pr-2 custom-scrollbar flex flex-col gap-1">
         {loading && messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin h-5 w-5 text-indigo-500" /></div>
         ) : messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-xs text-slate-500">No messages yet. Start the discussion!</div>
-        ) : (
-          messages.map((m, i) => {
+        ) : (() => {
+          // Group messages by calendar date
+          const groups = []
+          let currentDate = null
+          messages.forEach((m, i) => {
+            const msgDate = m.created_at ? new Date(m.created_at).toDateString() : 'unknown'
+            if (msgDate !== currentDate) {
+              currentDate = msgDate
+              groups.push({ type: 'separator', label: chatDateLabel(m.created_at), key: `sep-${i}` })
+            }
+            groups.push({ type: 'message', msg: m, key: m.id || i })
+          })
+          return groups.map(item => {
+            if (item.type === 'separator') {
+              return (
+                <div key={item.key} className="flex items-center gap-2 my-2">
+                  <div className="flex-1 h-px bg-slate-700/50" />
+                  <span className="text-[10px] text-slate-500 font-medium shrink-0">{item.label}</span>
+                  <div className="flex-1 h-px bg-slate-700/50" />
+                </div>
+              )
+            }
+            const m = item.msg
             if (m.is_system) {
               return (
-                <div key={m.id || i} id={`msg-${m.id}`} className="w-full flex justify-center my-1">
+                <div key={item.key} id={`msg-${m.id}`} className="w-full flex justify-center my-1">
                   <div className="bg-slate-800/60 text-slate-400 text-[10px] px-3 py-1 rounded-full border border-slate-700/50">
                     {m.text}
                   </div>
@@ -1734,19 +1782,20 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt, 
               )
             }
             const isMe = m.user_id === currentUser.id
+            const timeStr = m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
             return (
-              <div key={m.id || i} id={`msg-${m.id}`} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+              <div key={item.key} id={`msg-${m.id}`} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                 {!isMe && <span className="text-[10px] text-slate-500 ml-1 mb-0.5">{m.user_name}</span>}
-                <div className={`max-w-[85%] px-3 py-1.5 rounded-2xl text-sm ${isMe ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-700 text-slate-200 rounded-bl-none'}`}>
-                  {m.text}
+                <div className={`flex items-end gap-1.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <div className={`max-w-[80%] px-3 py-1.5 rounded-2xl text-sm ${isMe ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-700 text-slate-200 rounded-bl-none'}`}>
+                    {m.text}
+                  </div>
+                  <span className="text-[9px] text-slate-500 shrink-0 pb-0.5">{timeStr}</span>
                 </div>
-                <span className="text-[9px] text-slate-500 mt-0.5 mx-1">
-                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
               </div>
             )
           })
-        )}
+        })()}
       </div>
       <div className="relative">
         {showMentions && expenseUsers.length > 0 && (
@@ -1840,7 +1889,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-1 py-2">{monthYear}</p>
           <div className="space-y-1">
             {exps.map((e, i) => {
-              const { month, day } = formatDate(e.date)
+              const { month, day, year } = formatDate(e.date)
               const mySplit = e.splits.find(s => s.user_id === currentUser.id)
               const iPaid  = e.payer_id === currentUser.id
               const cat    = guessCategory(e.description)
@@ -1925,6 +1974,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                     <div className="w-9 shrink-0 text-center">
                       <p className="text-[10px] text-slate-500 uppercase leading-tight">{month}</p>
                       <p className="text-base font-bold text-slate-300 leading-tight">{day}</p>
+                      <p className="text-[9px] text-slate-600 leading-tight">{year}</p>
                     </div>
                     {/* Icon */}
                     <div className="h-10 w-10 shrink-0 bg-slate-700/60 rounded-xl flex items-center justify-center text-lg">
@@ -1936,6 +1986,9 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                       <p className="text-[10px] text-slate-400 mt-0.5">
                         Added by {e.created_by_name} • {iPaid ? 'You paid' : `${e.payer_name} paid`} £{e.amount.toFixed(2)}
                       </p>
+                      {e.created_at && (
+                        <p className="text-[9px] text-slate-600 mt-0.5">{formatTimestamp(e.created_at)}</p>
+                      )}
                     </div>
                     {/* Balance */}
                     <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">

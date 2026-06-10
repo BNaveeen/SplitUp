@@ -164,6 +164,7 @@ class ExpenseResponse(BaseModel):
     approvals: List[ApprovalResponse] = []
     last_message_at: Optional[str] = None
     last_message_text: Optional[str] = None
+    created_at: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -1497,5 +1498,6 @@ def _format_expense(e: Expense) -> dict:
         ],
         "approvals": [{"user_id": a.user_id, "user_name": a.user.name if a.user else "?", "approved": a.approved} for a in getattr(e, "approvals", [])],
         "last_message_at": last_message_at,
-        "last_message_text": last_message_text
+        "last_message_text": last_message_text,
+        "created_at": e.created_at.isoformat() if getattr(e, "created_at", None) else e.date.isoformat() if e.date else None,
     }
