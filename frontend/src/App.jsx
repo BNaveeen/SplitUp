@@ -1889,6 +1889,7 @@ function ExpenseChat({ expenseId, currentUser, expenseUsers = [], lastViewedAt, 
 // ── Expense List (Splitwise-style) ────────────────────────────────────────────
 function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = false, onEditExpense, onDeleteExpense, onApproveDelete, onRejectDelete, viewedChats, focusExpenseId, markChatViewed, initiatedSettlements = [], onReload, chatRefreshKey = 0, myRole = 'member' }) {
   const [expandedChatId, setExpandedChatId] = useState(focusExpenseId || null)
+  const [receiptViewUrl, setReceiptViewUrl] = useState(null)
 
   useEffect(() => {
     if (focusExpenseId) {
@@ -1947,6 +1948,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
   })
 
   return (
+    <>
     <div className="mt-2 space-y-4">
       {Object.entries(grouped).map(([monthYear, exps]) => (
         <div key={monthYear}>
@@ -2119,13 +2121,19 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
 
                   {/* Actions Row */}
                   <div className="flex items-center justify-between pt-2 border-t border-slate-700/30 mt-1 relative z-10">
-                    <div className="flex items-center">
+                    <div className="flex items-center gap-3">
                       <button onClick={() => handleToggleChat(e.id)} className="relative shrink-0 text-xs text-slate-400 hover:text-indigo-400 flex items-center gap-1.5 transition-colors font-medium">
                         <MessageSquare className="h-3.5 w-3.5" /> Chat
                         {e.last_message_at && (!viewedChats[e.id] || new Date(e.last_message_at) > new Date(viewedChats[e.id])) && (
                           <span className="absolute -top-1 -right-2 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-slate-800"></span>
                         )}
                       </button>
+                      {e.receipt_image && (
+                        <button onClick={() => setReceiptViewUrl(e.receipt_image)}
+                          className="text-xs text-slate-400 hover:text-indigo-400 flex items-center gap-1 transition-colors font-medium">
+                          📷 Receipt
+                        </button>
+                      )}
                     </div>
                     {e.last_message_text && (!viewedChats[e.id] || new Date(e.last_message_at) > new Date(viewedChats[e.id])) && (
                       <div className="flex-1 text-right truncate pl-4">
@@ -2155,6 +2163,29 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
         </div>
       ))}
     </div>
+
+    {/* Receipt lightbox */}
+    {receiptViewUrl && (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4"
+        onClick={() => setReceiptViewUrl(null)}>
+        <div className="relative max-w-lg w-full max-h-[90vh] flex flex-col items-center" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between w-full mb-2 px-1">
+            <span className="text-xs text-slate-400">Receipt</span>
+            <div className="flex items-center gap-3">
+              <a href={receiptViewUrl} download="receipt.jpg"
+                className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                Download
+              </a>
+              <button onClick={() => setReceiptViewUrl(null)} className="text-slate-400 hover:text-white transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+          <img src={receiptViewUrl} alt="Receipt" className="w-full max-h-[80vh] object-contain rounded-xl shadow-2xl" />
+        </div>
+      </div>
+    )}
+    </>
   )
 }
 
@@ -2418,27 +2449,42 @@ function parseReceiptText(text) {
     if (max > 0) amount = max.toFixed(2)
   }
 
-  // ── Store name (title at the very top of the receipt) ───────────────────────
-  // Receipts print the merchant name first, large + bold.
-  // Skip lines that look like addresses, phone numbers, postcodes, dates, URLs.
-  const isAddress   = l => /^\d+\s+\w.*(st|rd|ave|lane|road|street|drive|close|way)\b/i.test(l)
-  const isPhone     = l => /^[\d\s\-\+\(\)\.]{7,}$/.test(l) || /^tel[\s:]/i.test(l)
-  const isPostcode  = l => /\b[A-Z]{1,2}\d{1,2}\s*\d[A-Z]{2}\b/i.test(l)
-  const isDate      = l => /\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/.test(l)
-  const isUrl       = l => /www\.|\.com|\.co\.uk/i.test(l)
-  const isVatReg    = l => /^(vat|reg|no\.?|#|receipt|invoice|order)/i.test(l)
-  const isJunkLine  = l =>
-    l.length < 3 || l.length > 52 ||
-    /^\d+$/.test(l) ||
-    isPhone(l) || isPostcode(l) || isDate(l) || isUrl(l) || isAddress(l) || isVatReg(l)
+  // ── Store name — score-based so the merchant name beats addresses/phone lines ─
+  function storeScore(l) {
+    if (!l || l.length < 3 || l.length > 55) return -1
+    if (/^\d+$/.test(l)) return -1                                         // pure numbers
+    if (/\d{1,2}[\/\-:]\d{1,2}[\/\-:]\d{2,4}/.test(l)) return -1        // date/time
+    if (/^(www\.|http)/i.test(l) || /\.(com|co\.uk|org|net)/i.test(l)) return -1  // URL
+    if (/^(tel|fax|phone)[\s:]/i.test(l)) return -1                       // phone label
+    if (/^(vat|reg|no\.?|#|receipt|invoice|order|staff|till|sale\s|card|auth|change|payment|expiry)/i.test(l)) return -1
+    const letters = (l.match(/[a-zA-Z]/g) || []).length
+    const digits  = (l.match(/\d/g) || []).length
+    if (letters < 3) return -1
+    if (digits > letters) return -1  // more digits than letters = not a name
+    // Address: has digits AND a road-type word
+    if (digits > 0 && /\b(road|street|ave|avenue|close|way|lane|rd|blvd|drive|gardens?|court)\b/i.test(l)) return -1
+    // UK postcode anywhere in line
+    if (/\b[A-Z]{1,2}\d{1,2}\s*\d[A-Z]{2}\b/i.test(l)) return -1
+    let score = letters
+    if (/^[A-Z][A-Z\s&'.,\-]+$/.test(l)) score += 20  // ALL CAPS = classic store header
+    if (digits === 0) score += 8
+    if (/&/.test(l)) score += 5                        // ampersands common in store names
+    if (l.length >= 4 && l.length <= 35) score += 4
+    return score
+  }
 
-  // Look only at the first 10 lines — the store name is always at the top
-  const titleLine = lines.slice(0, 10).find(l => !isJunkLine(l) && /[a-zA-Z]{2,}/.test(l)) || ''
+  // Score all lines in the first 8; pick the highest-scoring (store name at top wins)
+  let bestLine = '', bestScore = -1
+  lines.slice(0, 8).forEach(l => {
+    const s = storeScore(l)
+    if (s > bestScore) { bestScore = s; bestLine = l }
+  })
 
-  // If it's ALL CAPS convert to Title Case for readability
-  const desc = /^[^a-z]+$/.test(titleLine)
-    ? titleLine.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
-    : titleLine
+  const desc = bestScore > 0
+    ? (/^[^a-z]+$/.test(bestLine)
+        ? bestLine.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+        : bestLine)
+    : ''
 
   // ── Date ────────────────────────────────────────────────────────────────────
   let date = new Date().toISOString().split('T')[0]
@@ -2470,6 +2516,25 @@ async function runReceiptOCR(file) {
   }
 }
 
+// Compress an image File to a base64 JPEG ≤ ~150KB for DB storage
+function compressImageToBase64(file, maxDim = 1000, quality = 0.65) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width  = Math.round(img.width  * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = reject
+    img.src = url
+  })
+}
+
 // ── Add Expense Modal ─────────────────────────────────────────────────────────
 function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialExpense, onClose, onSuccess }) {
   const [description, setDescription] = useState(initialExpense?.description || '')
@@ -2492,6 +2557,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
   const [scanning, setScanning]       = useState(false)
   const [scanError, setScanError]     = useState('')
   const [showScanMenu, setShowScanMenu] = useState(false)
+  const [receiptImage, setReceiptImage] = useState(initialExpense?.receipt_image || null)
   const scanInputRef                  = useRef(null)
   const scanCameraRef                 = useRef(null)
   const submittingRef                 = useRef(false)
@@ -2527,10 +2593,15 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     if (!file) return
     setScanning(true); setScanError('')
     try {
-      const result = await runReceiptOCR(file)
+      // Run OCR and compress image in parallel
+      const [result, compressed] = await Promise.all([
+        runReceiptOCR(file),
+        compressImageToBase64(file),
+      ])
       if (result.amount) setAmount(result.amount)
       if (result.description) setDescription(prev => prev || result.description)
       if (result.date) setDate(result.date)
+      setReceiptImage(compressed)
       if (!result.amount) setScanError('Could not detect a total — please enter the amount manually.')
     } catch (err) {
       setScanError('Scan failed. Try a clearer photo.')
@@ -2665,6 +2736,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         group_id: groupId ? parseInt(groupId) : null,
         date,
         splits: finalSplits,
+        receipt_image: receiptImage || null,
       }
       if (initialExpense) {
         await updateExpense(initialExpense.id, payload)
@@ -2887,6 +2959,18 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                   className="text-red-400 text-sm text-center bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
                   {error}
                 </motion.p>
+              )}
+
+              {/* Receipt image thumbnail */}
+              {receiptImage && (
+                <div className="relative rounded-xl overflow-hidden border border-slate-700/60">
+                  <img src={receiptImage} alt="Receipt" className="w-full max-h-40 object-cover object-top" />
+                  <button type="button" onClick={() => setReceiptImage(null)}
+                    className="absolute top-2 right-2 p-1 bg-black/60 rounded-full text-white hover:bg-black/80 transition-colors">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="absolute bottom-2 left-2 text-[10px] bg-black/60 text-slate-300 px-2 py-0.5 rounded-full">Receipt attached</span>
+                </div>
               )}
 
               <button type="submit" disabled={loading}

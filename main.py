@@ -149,6 +149,7 @@ class ExpenseCreate(BaseModel):
     group_id: Optional[int] = None
     date: Optional[str] = None   # ISO date string e.g. "2026-05-31"
     splits: List[SplitCreate]
+    receipt_image: Optional[str] = None  # base64 compressed JPEG
 
 class SplitResponse(BaseModel):
     user_id: int
@@ -196,6 +197,7 @@ class ExpenseResponse(BaseModel):
     last_message_text: Optional[str] = None
     created_at: Optional[str] = None
     settlement_statuses: List[SettlementStatusEntry] = []
+    receipt_image: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -968,6 +970,7 @@ def split_expense(expense: ExpenseCreate, db: Session = Depends(get_db)):
         created_by_id=expense.created_by_id,
         group_id=expense.group_id,
         date=expense_date,
+        receipt_image=expense.receipt_image,
     )
     db.add(new_expense)
     db.commit()
@@ -1140,6 +1143,16 @@ async def startup_event():
     global _main_loop
     _main_loop = asyncio.get_running_loop()
     asyncio.create_task(_deletion_scheduler())
+    # Add receipt_image column if not present (safe on repeated startup)
+    mig_db = SessionLocal()
+    try:
+        from sqlalchemy import text as _text
+        mig_db.execute(_text("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_image TEXT"))
+        mig_db.commit()
+    except Exception:
+        mig_db.rollback()
+    finally:
+        mig_db.close()
     # One-time cleanup: remove fake "Payment" expenses created by the old approve_settlement code.
     # Those were auto-created with description="Payment" and payer_id != created_by_id.
     # Legitimate "Payment" expenses typed by users typically have the same person as payer and creator.
@@ -1667,4 +1680,5 @@ def _format_expense(e: Expense, db=None) -> dict:
         "last_message_text": last_message_text,
         "created_at": e.created_at.isoformat() if getattr(e, "created_at", None) else e.date.isoformat() if e.date else None,
         "settlement_statuses": settlement_statuses,
+        "receipt_image": getattr(e, "receipt_image", None),
     }

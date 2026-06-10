@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Numeric, ForeignKey, Table, DateTime, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Numeric, ForeignKey, Table, DateTime, Boolean, Text
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
 
@@ -78,6 +78,7 @@ class Expense(Base):
     payer_id = Column(Integer, ForeignKey("users.id"), index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), index=True)
     status = Column(String, default="active", index=True) # active, pending_deletion
+    receipt_image = Column(Text, nullable=True)
 
     group = relationship("Group", back_populates="expenses")
     payer = relationship("User", foreign_keys=[payer_id], back_populates="expenses_paid")
