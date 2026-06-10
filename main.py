@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import secrets
 import os
@@ -1014,20 +1014,34 @@ def delete_expense(expense_id: int, requester_id: int, db: Session = Depends(get
     db.commit()
     return {"message": "Deletion request initiated"}
 
-async def delayed_delete_expense(expense_id: int):
-    await asyncio.sleep(600) # 10 minutes
-    db = SessionLocal()
-    try:
-        expense = db.query(Expense).filter(Expense.id == expense_id).first()
-        if expense and expense.status == "approved_for_deletion":
-            expense.status = "deleted"
-            _add_system_message(db, expense_id, expense.created_by_id, "Expense permanently deleted.")
-            db.commit()
-    finally:
-        db.close()
+async def _deletion_scheduler():
+    """Poll every 60 seconds and delete expenses whose 10-minute window has passed."""
+    while True:
+        await asyncio.sleep(60)
+        db = SessionLocal()
+        try:
+            cutoff = datetime.utcnow() - timedelta(minutes=10)
+            expired = db.query(Expense).filter(
+                Expense.status == "approved_for_deletion",
+                Expense.deletion_approved_at != None,
+                Expense.deletion_approved_at <= cutoff
+            ).all()
+            for expense in expired:
+                expense.status = "deleted"
+                _add_system_message(db, expense.id, expense.created_by_id, "Expense permanently deleted.")
+            if expired:
+                db.commit()
+        except Exception:
+            pass
+        finally:
+            db.close()
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_deletion_scheduler())
 
 @app.post("/expenses/{expense_id}/approve_deletion")
-def approve_deletion(expense_id: int, user_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def approve_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)):
     """Approve the deletion of an expense."""
     from database import ExpenseDeletionApproval
     approval = db.query(ExpenseDeletionApproval).filter(
@@ -1056,6 +1070,7 @@ def approve_deletion(expense_id: int, user_id: int, background_tasks: Background
         expense = db.query(Expense).filter(Expense.id == expense_id).first()
         if rejections > 0:
             expense.status = "active"
+            expense.deletion_approved_at = None
             for appr in list(expense.approvals):
                 db.delete(appr)
             db.flush()
@@ -1064,9 +1079,9 @@ def approve_deletion(expense_id: int, user_id: int, background_tasks: Background
             return {"message": "Deletion was rejected by someone and cancelled"}
         else:
             expense.status = "approved_for_deletion"
+            expense.deletion_approved_at = datetime.utcnow()
             _add_system_message(db, expense_id, user_id, "All users approved deletion. Deleting in 10 minutes.")
             db.commit()
-            background_tasks.add_task(delayed_delete_expense, expense_id)
             return {"message": "All approved. Expense will be deleted in 10 minutes."}
             
     _add_system_message(db, expense_id, user_id, "Approved the deletion request.")
@@ -1123,6 +1138,7 @@ def cancel_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Expense is not pending deletion")
         
     expense.status = "active"
+    expense.deletion_approved_at = None
     for appr in list(expense.approvals):
         db.delete(appr)
     db.flush()

@@ -73,6 +73,7 @@ class Expense(Base):
     amount = Column(Numeric(10, 2))
     date = Column(DateTime, default=datetime.utcnow, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
+    deletion_approved_at = Column(DateTime, nullable=True)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=True, index=True)
     payer_id = Column(Integer, ForeignKey("users.id"), index=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), index=True)
