@@ -214,6 +214,9 @@ export const renameGroup = (groupId, name, requesterId) =>
     body: JSON.stringify({ name, requester_id: requesterId }),
   }).then(handleResponse);
 
+export const fetchHealth = () =>
+  fetch(`${API_URL}/health`).then(r => r.ok ? r.json() : Promise.reject());
+
 // WebSocket URL helper
 export const getWsUrl = (userId) => {
   const wsProtocol = isLocal ? 'ws' : 'wss';

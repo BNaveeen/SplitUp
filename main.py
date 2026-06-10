@@ -241,6 +241,12 @@ class BalanceEntry(BaseModel):
     to_user_name: str
     amount: float
 
+# ── Health ────────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
 # ── Auth Routes ───────────────────────────────────────────────────────────────
 
 @app.post("/register/", response_model=UserResponse)

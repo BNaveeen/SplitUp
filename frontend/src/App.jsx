@@ -17,7 +17,7 @@ import {
   fetchInitiatedSettlements,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
-  renameGroup
+  renameGroup, fetchHealth
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -172,9 +172,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#1a1a2e] text-slate-100 font-sans overflow-hidden relative">
-      {/* gradient blobs */}
-      <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-indigo-700/15 blur-[140px] pointer-events-none" />
-      <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-700/15 blur-[140px] pointer-events-none" />
+      {/* gradient blobs — hidden on mobile to avoid GPU strain */}
+      <div className="hidden sm:block fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-indigo-700/15 blur-[80px] pointer-events-none" />
+      <div className="hidden sm:block fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-700/15 blur-[80px] pointer-events-none" />
       <AnimatePresence mode="wait">
         {!user
           ? <LoginScreen key="login" onLogin={handleLogin} />
@@ -287,6 +287,7 @@ function Dashboard({ user, onLogout }) {
   const [pendingSettlements, setPendingSettlements] = useState([])
   const [initiatedSettlements, setInitiatedSettlements] = useState([])
   const [showPendingSettlements, setShowPendingSettlements] = useState(false)
+  const [slowLoad, setSlowLoad] = useState(false)
   const wsRef = useRef(null)
 
   // WebSocket: real-time push for notifications and new chat messages
@@ -333,21 +334,28 @@ function Dashboard({ user, onLogout }) {
 
   const loadData = useCallback(async () => {
     setLoading(true)
-    const [g, u, n, b, ps, is] = await Promise.all([
-      fetchUserGroups(user.id), 
-      fetchUsers(user.id), 
-      fetchNotifications(user.id),
-      fetchAllUserBalances(user.id),
-      fetchPendingSettlements(user.id),
-      fetchInitiatedSettlements(user.id)
-    ])
-    setGroups(g)
-    setUsers(u)
-    setNotifications(n)
-    setGlobalBalances(b)
-    setPendingSettlements(ps)
-    setInitiatedSettlements(is)
-    setLoading(false)
+    // Show "waking up" message if server takes >5s (Render cold start)
+    const slowTimer = setTimeout(() => setSlowLoad(true), 5000)
+    try {
+      const [g, u, n, b, ps, is] = await Promise.all([
+        fetchUserGroups(user.id),
+        fetchUsers(user.id),
+        fetchNotifications(user.id),
+        fetchAllUserBalances(user.id),
+        fetchPendingSettlements(user.id),
+        fetchInitiatedSettlements(user.id)
+      ])
+      setGroups(g)
+      setUsers(u)
+      setNotifications(n)
+      setGlobalBalances(b)
+      setPendingSettlements(ps)
+      setInitiatedSettlements(is)
+    } finally {
+      clearTimeout(slowTimer)
+      setSlowLoad(false)
+      setLoading(false)
+    }
   }, [user.id])
 
   useEffect(() => {
@@ -540,7 +548,15 @@ function Dashboard({ user, onLogout }) {
         <>
           <main className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
             {loading ? (
-              <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin h-8 w-8 text-indigo-500" /></div>
+              <div className="flex flex-col justify-center items-center h-64 gap-4">
+                <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
+                {slowLoad && (
+                  <div className="text-center px-6">
+                    <p className="text-slate-300 text-sm font-medium">Server is waking up…</p>
+                    <p className="text-slate-500 text-xs mt-1">This takes ~30s on first load. Hang tight!</p>
+                  </div>
+                )}
+              </div>
             ) : (
               <AnimatePresence mode="wait">
                 <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
