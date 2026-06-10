@@ -9,7 +9,7 @@ import secrets
 import os
 import json
 
-from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, PendingInvite, Base
+from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, PendingInvite, Base, group_members
 
 app = FastAPI(title="Splitwise Clone API")
 
@@ -97,6 +97,21 @@ class GroupDetailResponse(BaseModel):
 
 class AddMemberRequest(BaseModel):
     email: str
+
+class AddMemberByIdRequest(BaseModel):
+    user_id: int
+    admin_user_id: int
+
+class MembershipResponse(BaseModel):
+    user_id: int
+    user_name: str
+    user_email: str
+    role: str          # 'super_admin' | 'admin' | 'member'
+    is_active: bool
+
+class UpdateRoleRequest(BaseModel):
+    role: str          # 'super_admin' | 'admin' | 'member'
+    admin_user_id: int
 
 class SplitCreate(BaseModel):
     user_id: int
@@ -516,14 +531,17 @@ def get_user_expenses(user_id: int, db: Session = Depends(get_db)):
 
 @app.post("/groups/", response_model=GroupDetailResponse)
 def create_group(group: GroupCreate, db: Session = Depends(get_db)):
-    """Create a new group and add the creator as a member."""
+    """Create a new group and add the creator as super_admin."""
     creator = db.query(User).filter(User.id == group.creator_id).first()
     if not creator:
         raise HTTPException(status_code=404, detail="Creator user not found")
 
     new_group = Group(name=group.name)
-    new_group.members.append(creator)
     db.add(new_group)
+    db.flush()  # get new_group.id
+    db.execute(group_members.insert().values(
+        user_id=creator.id, group_id=new_group.id, role="super_admin", is_active=True
+    ))
     db.commit()
     db.refresh(new_group)
     return new_group
@@ -555,7 +573,40 @@ def add_group_member(group_id: int, req: AddMemberRequest, db: Session = Depends
     if user in group.members:
         raise HTTPException(status_code=400, detail="User is already a member of this group")
 
-    group.members.append(user)
+    db.execute(group_members.insert().values(
+        user_id=user.id, group_id=group.id, role="member", is_active=True
+    ))
+    db.commit()
+    db.refresh(group)
+    return group
+
+@app.post("/groups/{group_id}/members/by_id", response_model=GroupDetailResponse)
+def add_group_member_by_id(group_id: int, req: AddMemberByIdRequest, db: Session = Depends(get_db)):
+    """Add a user to a group by user_id (admin only)."""
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # Verify requester is admin/super_admin in the group
+    row = db.execute(
+        group_members.select().where(
+            (group_members.c.group_id == group_id) &
+            (group_members.c.user_id == req.admin_user_id)
+        )
+    ).first()
+    if not row or row.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    user = db.query(User).filter(User.id == req.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user in group.members:
+        raise HTTPException(status_code=400, detail="User is already a member of this group")
+
+    db.execute(group_members.insert().values(
+        user_id=user.id, group_id=group.id, role="member", is_active=True
+    ))
     db.commit()
     db.refresh(group)
     return group
@@ -637,6 +688,146 @@ def get_group_balances(group_id: int, db: Session = Depends(get_db)):
         if debtors[di][1]   < 0.005: di += 1
 
     return balances
+
+# ── User Search ───────────────────────────────────────────────────────────────
+
+@app.get("/users/search")
+def search_users(q: str, exclude_group_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Search users by name or email. Optionally exclude members of a group."""
+    query = db.query(User).filter(
+        (User.name.ilike(f"%{q}%")) | (User.email.ilike(f"%{q}%"))
+    )
+    results = query.limit(20).all()
+    if exclude_group_id:
+        group = db.query(Group).filter(Group.id == exclude_group_id).first()
+        existing_ids = {m.id for m in group.members} if group else set()
+        results = [u for u in results if u.id not in existing_ids]
+    return [{"id": u.id, "name": u.name, "email": u.email} for u in results]
+
+# ── Group Membership Management ───────────────────────────────────────────────
+
+@app.get("/groups/{group_id}/memberships", response_model=List[MembershipResponse])
+def get_group_memberships(group_id: int, db: Session = Depends(get_db)):
+    """Get all memberships for a group with roles and active status."""
+    rows = db.execute(
+        group_members.select().where(group_members.c.group_id == group_id)
+    ).fetchall()
+    result = []
+    for row in rows:
+        user = db.query(User).filter(User.id == row.user_id).first()
+        if user:
+            result.append(MembershipResponse(
+                user_id=user.id,
+                user_name=user.name,
+                user_email=user.email,
+                role=row.role or "member",
+                is_active=bool(row.is_active),
+            ))
+    return result
+
+@app.put("/groups/{group_id}/members/{user_id}/role")
+def update_member_role(group_id: int, user_id: int, req: UpdateRoleRequest, db: Session = Depends(get_db)):
+    """Change a member's role. Only super_admin can promote to super_admin/admin."""
+    if req.role not in ("super_admin", "admin", "member"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    admin_row = db.execute(
+        group_members.select().where(
+            (group_members.c.group_id == group_id) &
+            (group_members.c.user_id == req.admin_user_id)
+        )
+    ).first()
+    if not admin_row or admin_row.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    if req.role in ("super_admin", "admin") and admin_row.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only super admin can promote members")
+
+    db.execute(
+        group_members.update()
+        .where((group_members.c.group_id == group_id) & (group_members.c.user_id == user_id))
+        .values(role=req.role)
+    )
+    db.commit()
+    return {"message": f"Role updated to {req.role}"}
+
+@app.delete("/groups/{group_id}/members/{user_id}")
+def remove_group_member(group_id: int, user_id: int, admin_user_id: int, db: Session = Depends(get_db)):
+    """Remove a member from the group (admin only). Returns warning if they have unsettled splits."""
+    admin_row = db.execute(
+        group_members.select().where(
+            (group_members.c.group_id == group_id) &
+            (group_members.c.user_id == admin_user_id)
+        )
+    ).first()
+    if not admin_row or admin_row.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    target_row = db.execute(
+        group_members.select().where(
+            (group_members.c.group_id == group_id) &
+            (group_members.c.user_id == user_id)
+        )
+    ).first()
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Member not found in group")
+    if target_row.role == "super_admin":
+        raise HTTPException(status_code=403, detail="Cannot remove the group super admin")
+
+    # Check for active expense splits
+    active_splits = (
+        db.query(ExpenseSplit)
+        .join(Expense, Expense.id == ExpenseSplit.expense_id)
+        .filter(
+            Expense.group_id == group_id,
+            ExpenseSplit.user_id == user_id,
+            Expense.status == "active",
+        )
+        .count()
+    )
+
+    db.execute(
+        group_members.delete().where(
+            (group_members.c.group_id == group_id) & (group_members.c.user_id == user_id)
+        )
+    )
+    db.commit()
+
+    warning = None
+    if active_splits > 0:
+        warning = f"Removed, but this user had {active_splits} active expense split(s) in the group."
+    return {"message": "Member removed", "warning": warning}
+
+@app.put("/groups/{group_id}/members/{user_id}/deactivate")
+def toggle_member_active(group_id: int, user_id: int, admin_user_id: int, db: Session = Depends(get_db)):
+    """Deactivate or reactivate a group member (admin only)."""
+    admin_row = db.execute(
+        group_members.select().where(
+            (group_members.c.group_id == group_id) &
+            (group_members.c.user_id == admin_user_id)
+        )
+    ).first()
+    if not admin_row or admin_row.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    target_row = db.execute(
+        group_members.select().where(
+            (group_members.c.group_id == group_id) &
+            (group_members.c.user_id == user_id)
+        )
+    ).first()
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Member not found in group")
+    if target_row.role == "super_admin":
+        raise HTTPException(status_code=403, detail="Cannot deactivate the group super admin")
+
+    new_status = not bool(target_row.is_active)
+    db.execute(
+        group_members.update()
+        .where((group_members.c.group_id == group_id) & (group_members.c.user_id == user_id))
+        .values(is_active=new_status)
+    )
+    db.commit()
+    return {"message": "activated" if new_status else "deactivated", "is_active": new_status}
 
 # ── Expense Routes ────────────────────────────────────────────────────────────
 

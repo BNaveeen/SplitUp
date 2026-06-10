@@ -32,12 +32,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-# Association table for Group members
+# Association table for Group members (includes role + active status)
 group_members = Table(
     "group_members",
     Base.metadata,
     Column("user_id", Integer, ForeignKey("users.id"), index=True),
     Column("group_id", Integer, ForeignKey("groups.id"), index=True),
+    Column("role", String(20), default="member"),      # 'super_admin' | 'admin' | 'member'
+    Column("is_active", Boolean, default=True),
 )
 
 class User(Base):

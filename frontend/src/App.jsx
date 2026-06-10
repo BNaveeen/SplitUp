@@ -5,7 +5,7 @@ import {
   Wallet, Users, LayoutGrid, LogOut, Loader2, CheckCircle, CheckCircle2,
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
-  Edit2, Trash2, Settings, MessageSquare, Bell
+  Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -15,7 +15,8 @@ import {
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
   fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements,
   fetchInitiatedSettlements,
-  fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications
+  fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications,
+  searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -621,20 +622,24 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const [expenses, setExpenses] = useState([])
   const [balances, setBalances] = useState([])
   const [members, setMembers]   = useState(group.members || [])
+  const [memberships, setMemberships] = useState([])  // [{user_id, user_name, role, is_active}]
   const [loading, setLoading]   = useState(true)
   const [activeSection, setSection] = useState('expenses') // expenses | balances
   const [showAddExp, setAddExp]  = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
-  const [memberEmail, setMemberEmail] = useState('')
+  const [memberSearch, setMemberSearch] = useState('')
   const [memberPhone, setMemberPhone] = useState('')
   const [memberLoading, setMemberLoading] = useState(false)
   const [memberError, setMemberError] = useState('')
-  const [inviteMode, setInviteMode] = useState(false)   // true = user not found, show invite form
-  const [inviteSent, setInviteSent] = useState(false)    // true = invite confirmation shown
+  const [inviteMode, setInviteMode] = useState(false)
+  const [inviteSent, setInviteSent] = useState(false)
   const [inviteMsg, setInviteMsg] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [searchResults, setSearchResults] = useState([])  // server search results
+  const [searchLoading, setSearchLoading] = useState(false)
   const [editingExpense, setEditingExpense] = useState(null)
   const [showValidOnly, setShowValidOnly] = useState(false)
+  const [memberActionsId, setMemberActionsId] = useState(null)  // which member's action menu is open
   const [viewedChats, setViewedChats] = useState(() => {
     try { return JSON.parse(localStorage.getItem(`split_chat_viewed_${currentUser.id}`) || '{}') } catch { return {} }
   })
@@ -646,22 +651,12 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     if (isMember) (g.members || []).forEach(m => { if (m.id !== currentUser.id) contactIds.add(m.id) })
   })
 
-  // Filter + sort suggestions: exclude self & existing members, contacts first, then alphabetical
   const memberIds = new Set(members.map(m => m.id))
-  const suggestions = (allUsers || [])
-    .filter(u => u.id !== currentUser.id && !memberIds.has(u.id))
-    .filter(u => {
-      if (!memberEmail.trim()) return true
-      const q = memberEmail.toLowerCase()
-      return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
-    })
-    .sort((a, b) => {
-      const aContact = contactIds.has(a.id) ? 0 : 1
-      const bContact = contactIds.has(b.id) ? 0 : 1
-      if (aContact !== bContact) return aContact - bContact
-      return a.name.localeCompare(b.name)
-    })
-    .slice(0, 6) // max 6 suggestions
+  // Derive current user's role in this group
+  const myMembership = memberships.find(m => m.user_id === currentUser.id)
+  const myRole = myMembership?.role || 'member'
+  const isGroupAdmin = myRole === 'admin' || myRole === 'super_admin'
+  const isSuperAdmin = myRole === 'super_admin'
 
   const markChatViewed = useCallback((expId) => {
     setViewedChats(prev => {
@@ -675,9 +670,10 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
   const loadGroupData = useCallback(async () => {
     setLoading(true)
-    const [e, b] = await Promise.all([fetchGroupExpenses(group.id), fetchGroupBalances(group.id)])
+    const [e, b, ms] = await Promise.all([fetchGroupExpenses(group.id), fetchGroupBalances(group.id), fetchGroupMemberships(group.id)])
     setExpenses(e)
     setBalances(b)
+    setMemberships(ms)
     setLoading(false)
     setChatRefreshKey(k => k + 1)
   }, [group.id])
@@ -749,41 +745,91 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   }
 
   const resetMemberForm = () => {
-    setMemberEmail(''); setMemberPhone(''); setMemberError(''); setInviteMode(false); setInviteSent(false); setInviteMsg('')
+    setMemberSearch(''); setMemberPhone(''); setMemberError('')
+    setInviteMode(false); setInviteSent(false); setInviteMsg(''); setSearchResults([])
   }
 
-  const handleAddMember = async (e) => {
-    e.preventDefault()
-    if (!memberEmail.trim()) return
+  // Live server search — triggers after 5 chars
+  useEffect(() => {
+    if (memberSearch.trim().length < 5) { setSearchResults([]); setSearchLoading(false); return }
+    setSearchLoading(true)
+    const timer = setTimeout(() => {
+      searchUsers(memberSearch.trim(), group.id)
+        .then(results => setSearchResults(results.filter(u => u.id !== currentUser.id && !memberIds.has(u.id))))
+        .finally(() => setSearchLoading(false))
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [memberSearch, group.id])
+
+  const handleAddMemberById = async (userId) => {
     setMemberLoading(true); setMemberError('')
     try {
-      const updated = await addGroupMember(group.id, memberEmail.trim())
+      const updated = await addGroupMemberById(group.id, userId, currentUser.id)
       setMembers(updated.members)
+      const ms = await fetchGroupMemberships(group.id)
+      setMemberships(ms)
+      resetMemberForm(); setShowAddMember(false)
+      onGroupUpdated()
+    } catch (err) { setMemberError(err.message) }
+    finally { setMemberLoading(false) }
+  }
+
+  const handleAddMemberByEmail = async (e) => {
+    e.preventDefault()
+    if (!memberSearch.trim()) return
+    setMemberLoading(true); setMemberError('')
+    try {
+      const updated = await addGroupMember(group.id, memberSearch.trim())
+      setMembers(updated.members)
+      const ms = await fetchGroupMemberships(group.id)
+      setMemberships(ms)
       resetMemberForm(); setShowAddMember(false)
       onGroupUpdated()
     } catch (err) {
-      // If user not found, switch to invite mode instead of showing a dead-end error
       if (err.message && err.message.toLowerCase().includes('no user found')) {
-        setInviteMode(true)
-        setMemberError('')
-      } else {
-        setMemberError(err.message)
-      }
+        setInviteMode(true); setMemberError('')
+      } else { setMemberError(err.message) }
     } finally { setMemberLoading(false) }
   }
 
   const handleSendInvite = async (e) => {
     e.preventDefault()
-    if (!memberEmail.trim()) return
+    if (!memberSearch.trim()) return
     setMemberLoading(true); setMemberError('')
     try {
-      const result = await sendInvite(memberEmail.trim(), memberPhone.trim(), group.id, currentUser.id)
+      const result = await sendInvite(memberSearch.trim(), memberPhone.trim(), group.id, currentUser.id)
       setInviteSent(true)
-      setInviteMsg(result.message || `Invite sent to ${memberEmail}`)
-      // Auto-close after 3 seconds
+      setInviteMsg(result.message || `Invite sent to ${memberSearch}`)
       setTimeout(() => { resetMemberForm(); setShowAddMember(false) }, 3000)
     } catch (err) { setMemberError(err.message) }
     finally { setMemberLoading(false) }
+  }
+
+  const handleSetRole = async (userId, role) => {
+    try {
+      await setGroupMemberRole(group.id, userId, role, currentUser.id)
+      setMemberships(prev => prev.map(m => m.user_id === userId ? { ...m, role } : m))
+    } catch (err) { alert(err.message) }
+    setMemberActionsId(null)
+  }
+
+  const handleRemoveMember = async (userId, userName) => {
+    if (!confirm(`Remove ${userName} from the group?`)) return
+    try {
+      const result = await removeGroupMember(group.id, userId, currentUser.id)
+      setMembers(prev => prev.filter(m => m.id !== userId))
+      setMemberships(prev => prev.filter(m => m.user_id !== userId))
+      if (result.warning) alert(result.warning)
+    } catch (err) { alert(err.message) }
+    setMemberActionsId(null)
+  }
+
+  const handleToggleActive = async (userId) => {
+    try {
+      const result = await toggleGroupMemberActive(group.id, userId, currentUser.id)
+      setMemberships(prev => prev.map(m => m.user_id === userId ? { ...m, is_active: result.is_active } : m))
+    } catch (err) { alert(err.message) }
+    setMemberActionsId(null)
   }
 
   // Compute this user's balance in this group
@@ -842,21 +888,88 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
         </div>
 
         {/* Members row */}
-        <div className="mt-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-3">
+        <div className="mt-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-3" onClick={() => memberActionsId && setMemberActionsId(null)}>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Members</p>
-            <button onClick={() => { setShowAddMember(s => { if (s) resetMemberForm(); return !s }) }}
-              className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
-              <UserPlus className="h-3.5 w-3.5" /> Add
-            </button>
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Members</p>
+              {myRole === 'super_admin' && <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Super Admin</span>}
+              {myRole === 'admin' && <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Admin</span>}
+            </div>
+            {isGroupAdmin && (
+              <button onClick={() => { setShowAddMember(s => { if (s) resetMemberForm(); return !s }) }}
+                className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                <UserPlus className="h-3.5 w-3.5" /> Add
+              </button>
+            )}
           </div>
-          <div className="flex flex-wrap gap-2">
-            {members.map(m => (
-              <div key={m.id} className="flex items-center gap-2 bg-slate-700/50 rounded-full pl-1 pr-3 py-1">
-                <div className={`h-6 w-6 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[10px] font-bold text-white`}>
-                  {m.name.charAt(0)}
+
+          {/* Member list with roles + admin controls */}
+          <div className="space-y-1.5">
+            {memberships.length > 0 ? memberships.map(ms => {
+              const isMe = ms.user_id === currentUser.id
+              const isOpen = memberActionsId === ms.user_id
+              return (
+                <div key={ms.user_id} className={`flex items-center gap-2.5 rounded-xl px-2 py-1.5 transition-colors ${!ms.is_active ? 'opacity-50' : ''}`}>
+                  <div className={`relative h-7 w-7 rounded-full bg-gradient-to-br ${avatarColor(ms.user_id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                    {ms.user_name.charAt(0).toUpperCase()}
+                    {ms.role === 'super_admin' && <Crown className="absolute -top-1 -right-1 h-3 w-3 text-amber-400" />}
+                    {ms.role === 'admin' && <Shield className="absolute -top-1 -right-1 h-3 w-3 text-indigo-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-slate-200 truncate">
+                      {isMe ? 'You' : ms.user_name}
+                      {!ms.is_active && <span className="ml-1 text-[10px] text-slate-500">(Inactive)</span>}
+                    </p>
+                  </div>
+                  {/* Admin action menu */}
+                  {isGroupAdmin && !isMe && ms.role !== 'super_admin' && (
+                    <div className="relative shrink-0">
+                      <button onClick={e => { e.stopPropagation(); setMemberActionsId(isOpen ? null : ms.user_id) }}
+                        className="p-1 text-slate-500 hover:text-slate-300 rounded-lg transition-colors">
+                        <Settings className="h-3.5 w-3.5" />
+                      </button>
+                      <AnimatePresence>
+                        {isOpen && (
+                          <motion.div initial={{ opacity: 0, scale: 0.9, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.9, y: -4 }} transition={{ duration: 0.12 }}
+                            className="absolute right-0 top-7 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden"
+                            onClick={e => e.stopPropagation()}>
+                            {/* Role promotion — super_admin only */}
+                            {isSuperAdmin && ms.role === 'member' && (
+                              <button onClick={() => handleSetRole(ms.user_id, 'admin')}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-indigo-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
+                                <Shield className="h-3.5 w-3.5" /> Make Admin
+                              </button>
+                            )}
+                            {isSuperAdmin && ms.role === 'admin' && (
+                              <button onClick={() => handleSetRole(ms.user_id, 'member')}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
+                                <UserMinus className="h-3.5 w-3.5" /> Remove Admin
+                              </button>
+                            )}
+                            {/* Deactivate / Reactivate */}
+                            <button onClick={() => handleToggleActive(ms.user_id)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-amber-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
+                              <UserX className="h-3.5 w-3.5" /> {ms.is_active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                            {/* Remove from group */}
+                            <button onClick={() => handleRemoveMember(ms.user_id, ms.user_name)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" /> Remove from group
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
                 </div>
-                <span className="text-xs text-slate-300 font-medium">{m.id === currentUser.id ? 'You' : m.name}</span>
+              )
+            }) : members.map(m => (
+              <div key={m.id} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
+                <div className={`h-7 w-7 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                  {m.name.charAt(0).toUpperCase()}
+                </div>
+                <span className="text-xs text-slate-300">{m.id === currentUser.id ? 'You' : m.name}</span>
               </div>
             ))}
           </div>
@@ -864,35 +977,30 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
           <AnimatePresence>
             {showAddMember && (
               <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}>
+                transition={{ duration: 0.2 }} className="mt-3">
 
                 {/* ── Invite Sent Confirmation ── */}
                 {inviteSent ? (
-                  <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                    className="mt-3 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 text-center">
-                    <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300, damping: 20 }}>
-                      <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto mb-2" />
-                    </motion.div>
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 text-center">
+                    <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto mb-2" />
                     <p className="text-emerald-300 font-semibold text-sm">Invite Sent!</p>
                     <p className="text-emerald-400/70 text-xs mt-1">{inviteMsg}</p>
-                  </motion.div>
+                  </div>
 
                 /* ── Invite Mode (user not found) ── */
                 ) : inviteMode ? (
-                  <form onSubmit={handleSendInvite} className="mt-3 space-y-2">
+                  <form onSubmit={handleSendInvite} className="space-y-2">
                     <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-start gap-2">
                       <Mail className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
                       <p className="text-xs text-amber-300">
-                        <span className="font-semibold">{memberEmail}</span> isn't on SplitWise yet. Send them an invite to join!
+                        <span className="font-semibold">{memberSearch}</span> isn't on SplitWise yet. Send them an invite!
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 relative">
-                        <Phone className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input type="tel" value={memberPhone} onChange={e => setMemberPhone(e.target.value)}
-                          placeholder="Phone number (optional)"
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 text-sm" />
-                      </div>
+                    <div className="flex-1 relative">
+                      <Phone className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input type="tel" value={memberPhone} onChange={e => setMemberPhone(e.target.value)}
+                        placeholder="Phone number (optional)"
+                        className="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 text-sm" />
                     </div>
                     <div className="flex gap-2">
                       <button type="button" onClick={() => { setInviteMode(false); setMemberError('') }}
@@ -900,85 +1008,68 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                         Back
                       </button>
                       <button type="submit" disabled={memberLoading}
-                        className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-500/20">
+                        className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5">
                         {memberLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Send className="h-3.5 w-3.5" /> Send Invite</>}
                       </button>
                     </div>
                     {memberError && <p className="text-red-400 text-xs mt-1">{memberError}</p>}
                   </form>
 
-                /* ── Default: Add by email with autocomplete ── */
+                /* ── Default: search with 5-char threshold ── */
                 ) : (
-                  <form onSubmit={handleAddMember} className="mt-3">
-                    <div className="flex gap-2">
-                      <div className="flex-1 relative">
-                        <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 z-10" />
-                        <input autoFocus type="text" value={memberEmail}
-                          onChange={e => { setMemberEmail(e.target.value); setShowSuggestions(true) }}
-                          onFocus={() => setShowSuggestions(true)}
-                          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                          placeholder="Search name or email..."
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 text-sm" />
+                  <form onSubmit={handleAddMemberByEmail}>
+                    <div className="relative">
+                      <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 z-10" />
+                      <input autoFocus type="text" value={memberSearch}
+                        onChange={e => setMemberSearch(e.target.value)}
+                        placeholder="Type 5+ chars to search all users…"
+                        className="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 text-sm" />
 
-                        {/* Autocomplete dropdown */}
-                        <AnimatePresence>
-                          {showSuggestions && suggestions.length > 0 && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -4 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -4 }}
-                              transition={{ duration: 0.15 }}
-                              className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/40 z-50 overflow-hidden max-h-60 overflow-y-auto"
-                            >
-                              {suggestions.map((u, i) => (
-                                <button
-                                  key={u.id}
-                                  type="button"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => {
-                                    setMemberEmail(u.email)
-                                    setShowSuggestions(false)
-                                  }}
-                                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-700/60 transition-colors ${
-                                    i < suggestions.length - 1 ? 'border-b border-slate-700/30' : ''
-                                  }`}
-                                >
-                                  <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-xs font-bold text-white`}>
-                                    {u.name.charAt(0).toUpperCase()}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-slate-200 truncate">{u.name}</p>
-                                    <p className="text-xs text-slate-500 truncate">{u.email}</p>
-                                  </div>
-                                  {contactIds.has(u.id) && (
-                                    <span className="shrink-0 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full">Contact</span>
-                                  )}
-                                </button>
-                              ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                      {/* Search results dropdown */}
+                      <AnimatePresence>
+                        {memberSearch.trim().length >= 5 && (searchLoading || searchResults.length > 0) && (
+                          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl z-50 overflow-hidden max-h-52 overflow-y-auto">
+                            {searchLoading ? (
+                              <div className="flex items-center justify-center py-4 gap-2 text-xs text-slate-400">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
+                              </div>
+                            ) : searchResults.map((u, i) => (
+                              <button key={u.id} type="button"
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => handleAddMemberById(u.id)}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-700/60 transition-colors ${i < searchResults.length - 1 ? 'border-b border-slate-700/30' : ''}`}>
+                                <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                                  {u.name.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-slate-200 truncate">{u.name}</p>
+                                  <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                                </div>
+                                <span className="text-[10px] text-emerald-400 shrink-0">+ Add</span>
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
 
-                        {/* No matches hint */}
-                        <AnimatePresence>
-                          {showSuggestions && memberEmail.trim().length > 0 && suggestions.length === 0 && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -4 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -4 }}
-                              className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl shadow-black/40 z-50 px-3 py-3 text-center"
-                            >
-                              <p className="text-xs text-slate-400">No matching users found</p>
-                              <p className="text-[10px] text-slate-500 mt-0.5">Type a full email and click Add to invite</p>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                      <button type="submit" disabled={memberLoading || !memberEmail.trim()}
-                        className="bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5">
-                        {memberLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><UserPlus className="h-3.5 w-3.5" /> Add</>}
-                      </button>
+                      {/* No results after typing enough */}
+                      <AnimatePresence>
+                        {memberSearch.trim().length >= 5 && !searchLoading && searchResults.length === 0 && (
+                          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                            className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl z-50 px-3 py-3 text-center">
+                            <p className="text-xs text-slate-400">No users found</p>
+                            <button type="submit" className="text-[11px] text-indigo-400 mt-1 hover:underline">
+                              Invite "{memberSearch}" by email →
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
+                    {memberSearch.trim().length > 0 && memberSearch.trim().length < 5 && (
+                      <p className="text-[11px] text-slate-500 mt-1.5 px-1">{5 - memberSearch.trim().length} more character{5 - memberSearch.trim().length !== 1 ? 's' : ''} to search…</p>
+                    )}
                     {memberError && <p className="text-red-400 text-xs mt-2">{memberError}</p>}
                   </form>
                 )}

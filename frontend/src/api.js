@@ -176,6 +176,37 @@ export const fetchAdminSettlements = (adminId) =>
 export const fetchAdminNotifications = (adminId, userId = null) =>
   fetch(`${API_URL}/admin/notifications?admin_id=${adminId}${userId ? `&user_id=${userId}` : ''}`).then(handleResponse).catch(() => []);
 
+// Group membership management
+export const searchUsers = (q, excludeGroupId = null) =>
+  fetch(`${API_URL}/users/search?q=${encodeURIComponent(q)}${excludeGroupId ? `&exclude_group_id=${excludeGroupId}` : ''}`).then(handleResponse).catch(() => []);
+
+export const fetchGroupMemberships = (groupId) =>
+  fetch(`${API_URL}/groups/${groupId}/memberships`).then(handleResponse).catch(() => []);
+
+export const addGroupMemberById = (groupId, userId, adminUserId) =>
+  fetch(`${API_URL}/groups/${groupId}/members/by_id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, admin_user_id: adminUserId }),
+  }).then(handleResponse);
+
+export const setGroupMemberRole = (groupId, userId, role, adminUserId) =>
+  fetch(`${API_URL}/groups/${groupId}/members/${userId}/role`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role, admin_user_id: adminUserId }),
+  }).then(handleResponse);
+
+export const removeGroupMember = (groupId, userId, adminUserId) =>
+  fetch(`${API_URL}/groups/${groupId}/members/${userId}?admin_user_id=${adminUserId}`, {
+    method: 'DELETE',
+  }).then(handleResponse);
+
+export const toggleGroupMemberActive = (groupId, userId, adminUserId) =>
+  fetch(`${API_URL}/groups/${groupId}/members/${userId}/deactivate?admin_user_id=${adminUserId}`, {
+    method: 'PUT',
+  }).then(handleResponse);
+
 // WebSocket URL helper
 export const getWsUrl = (userId) => {
   const wsProtocol = isLocal ? 'ws' : 'wss';
