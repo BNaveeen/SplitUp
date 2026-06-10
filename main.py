@@ -666,6 +666,18 @@ def get_group_balances(group_id: int, db: Session = Depends(get_db)):
         if user_id in net and total_owed:
             net[user_id] -= float(total_owed)
 
+    # Include approved settlements — payer cleared their debt, payee received the money
+    from database import Settlement
+    approved = db.query(Settlement).filter(
+        Settlement.group_id == group_id,
+        Settlement.status == "approved"
+    ).all()
+    for s in approved:
+        if s.payer_id in net:
+            net[s.payer_id] += float(s.amount)
+        if s.payee_id in net:
+            net[s.payee_id] -= float(s.amount)
+
     # Simplify debts
     creditors = sorted([(uid, amt) for uid, amt in net.items() if amt > 0.005], key=lambda x: -x[1])
     debtors   = sorted([(uid, abs(amt)) for uid, amt in net.items() if amt < -0.005], key=lambda x: -x[1])
@@ -1305,7 +1317,17 @@ def create_settlement(req: SettlementCreate, db: Session = Depends(get_db)):
     payee = db.query(User).filter(User.id == req.payee_id).first()
     if not payer or not payee:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
+    # Prevent duplicate pending requests for the same expense
+    if req.expense_id:
+        existing = db.query(Settlement).filter(
+            Settlement.payer_id == req.payer_id,
+            Settlement.expense_id == req.expense_id,
+            Settlement.status == "pending"
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="A pending payment request already exists for this expense")
+
     new_settlement = Settlement(
         payer_id=req.payer_id,
         payee_id=req.payee_id,
@@ -1347,31 +1369,19 @@ def approve_settlement(settlement_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Settlement not found")
     if settlement.status != "pending":
         raise HTTPException(status_code=400, detail="Settlement is not pending")
-        
+
     settlement.status = "approved"
-    
-    # Create the offsetting Expense transaction
-    payment_expense = Expense(
-        description="Payment",
-        amount=settlement.amount,
-        group_id=settlement.group_id,
-        payer_id=settlement.payer_id,
-        created_by_id=settlement.payee_id,
-    )
-    db.add(payment_expense)
-    db.flush()
-    
-    # The payee receives the money (so they owe the payer back, clearing the debt)
-    split = ExpenseSplit(
-        expense_id=payment_expense.id,
-        user_id=settlement.payee_id,
-        amount=settlement.amount
-    )
-    db.add(split)
-    
+
+    # Add a system message to the original expense so payment shows inside it
+    if settlement.expense_id:
+        _add_system_message(
+            db, settlement.expense_id, settlement.payee_id,
+            f"{settlement.payer.name} paid £{settlement.amount:.2f} — confirmed by {settlement.payee.name}"
+        )
+
     _add_notification(db, settlement.payer_id, f"Your payment of £{settlement.amount} was approved by {settlement.payee.name}!")
     db.commit()
-    return {"message": "Settlement approved and transaction created."}
+    return {"message": "Settlement approved."}
 
 @app.post("/settlements/{settlement_id}/reject")
 def reject_settlement(settlement_id: int, db: Session = Depends(get_db)):
@@ -1408,7 +1418,11 @@ def get_pending_settlements(user_id: int, db: Session = Depends(get_db)):
 @app.get("/users/{user_id}/initiated_settlements", response_model=List[SettlementResponse])
 def get_initiated_settlements(user_id: int, db: Session = Depends(get_db)):
     from database import Settlement
-    settlements = db.query(Settlement).filter(Settlement.payer_id == user_id, Settlement.status == "pending").all()
+    # Return pending + approved so frontend can show "Waiting…" vs "Paid ✓"
+    settlements = db.query(Settlement).filter(
+        Settlement.payer_id == user_id,
+        Settlement.status.in_(["pending", "approved"])
+    ).all()
     res = []
     for s in settlements:
         res.append(SettlementResponse(

@@ -1934,15 +1934,26 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                     {/* Balance */}
                     <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
                       <p className={`text-xs font-semibold ${balColor}`}>{balLabel}</p>
-                      {!iPaid && mySplit && e.status !== 'deleted' && (
-                        initiatedSettlements.some(s => s.expense_id === e.id) ? (
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700/50 text-slate-400 border border-slate-600/50">
-                            Waiting...
-                          </span>
-                        ) : (
-                          <button 
+                      {!iPaid && mySplit && e.status !== 'deleted' && (() => {
+                        const mySettlement = initiatedSettlements.find(s => s.expense_id === e.id)
+                        if (mySettlement?.status === 'approved') {
+                          return (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              ✓ Paid
+                            </span>
+                          )
+                        }
+                        if (mySettlement?.status === 'pending') {
+                          return (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700/50 text-slate-400 border border-slate-600/50">
+                              Waiting…
+                            </span>
+                          )
+                        }
+                        return (
+                          <button
                             onClick={(ev) => {
-                              ev.stopPropagation();
+                              ev.stopPropagation()
                               if (window.confirm(`Mark your share (£${mySplit.amount.toFixed(2)}) as paid?`)) {
                                 createSettlement({
                                   payer_id: currentUser.id,
@@ -1951,18 +1962,16 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                                   group_id: e.group_id,
                                   expense_id: e.id
                                 }).then(() => {
-                                  alert("Payment sent for approval!")
                                   if (onReload) onReload()
-                                })
-                                .catch(() => alert("Failed to send payment request."));
+                                }).catch(err => alert(err.message || "Failed to send payment request."))
                               }
                             }}
-                            className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-colors border border-emerald-500/30"
+                            className="cursor-pointer px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white active:scale-95 transition-all border border-emerald-500/30"
                           >
                             Mark as Paid
                           </button>
                         )
-                      )}
+                      })()}
                     </div>
                   </div>
 
@@ -2229,13 +2238,15 @@ function PendingSettlementsModal({ settlements, onClose, onUpdate }) {
             settlements.map(s => (
               <div key={s.id} className="p-4 bg-slate-800/50 rounded-2xl border border-slate-700">
                 <p className="text-sm text-slate-300">
-                  <strong className="text-white">{s.payer_name}</strong> sent you a payment of <strong className="text-emerald-400">£{s.amount.toFixed(2)}</strong>.
+                  <strong className="text-white">{s.payer_name}</strong> marked their share as paid
                 </p>
+                <p className="text-2xl font-bold text-emerald-400 mt-1">£{s.amount.toFixed(2)}</p>
+                <p className="text-xs text-slate-500 mt-0.5">Approve to confirm you received this payment</p>
                 <div className="flex gap-2 mt-4">
-                  <button onClick={() => handleApprove(s.id)} className="flex-1 py-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 text-sm font-bold rounded-xl transition-colors hover:text-white border border-emerald-500/20">
-                    Approve
+                  <button onClick={() => handleApprove(s.id)} className="cursor-pointer flex-1 py-2.5 bg-emerald-500 text-white text-sm font-bold rounded-xl hover:bg-emerald-400 active:scale-95 transition-all shadow-lg shadow-emerald-500/20">
+                    ✓ Approve
                   </button>
-                  <button onClick={() => handleReject(s.id)} className="flex-1 py-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500 text-sm font-bold rounded-xl transition-colors hover:text-white border border-rose-500/20">
+                  <button onClick={() => handleReject(s.id)} className="cursor-pointer flex-1 py-2.5 bg-slate-700 text-rose-400 text-sm font-bold rounded-xl hover:bg-rose-500/20 hover:text-rose-300 active:scale-95 transition-all border border-slate-600">
                     Reject
                   </button>
                 </div>
