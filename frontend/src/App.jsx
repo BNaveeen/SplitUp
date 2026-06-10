@@ -117,24 +117,26 @@ function playNotificationSound() {
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [user, setUser] = useState(null)
+  // Initialize immediately from localStorage so refresh never flashes the login page
+  const [user, setUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('splitclone_user')
+      return saved ? JSON.parse(saved) : null
+    } catch { return null }
+  })
 
   useEffect(() => {
-    const saved = localStorage.getItem('splitclone_user')
-    if (!saved) return
-    const parsed = JSON.parse(saved)
-    // Always re-fetch from server so is_admin and other fields are fresh
-    fetchUsers(parsed.id)
+    if (!user) return
+    // Background refresh to pick up is_admin changes etc. — keep session even if server is slow
+    fetchUsers(user.id)
       .then(users => {
-        const freshUser = Array.isArray(users) && users.find(u => u.id === parsed.id && u.email === parsed.email)
+        const freshUser = Array.isArray(users) && users.find(u => u.id === user.id)
         if (freshUser) {
           localStorage.setItem('splitclone_user', JSON.stringify(freshUser))
           setUser(freshUser)
-        } else {
-          localStorage.removeItem('splitclone_user')
         }
       })
-      .catch(() => setUser(parsed))
+      .catch(() => {})
   }, [])
 
   const handleLogin  = (u) => { setUser(u); localStorage.setItem('splitclone_user', JSON.stringify(u)) }
@@ -167,7 +169,10 @@ function LoginScreen({ onLogin }) {
   const handleSubmit = async (e) => {
     e.preventDefault(); setError(''); setLoading(true)
     try {
-      const u = isLogin ? await loginUser(email, password) : await registerUser(name, email, password)
+      const normalizedEmail = email.trim().toLowerCase()
+      const u = isLogin
+        ? await loginUser(normalizedEmail, password)
+        : await registerUser(name.trim(), normalizedEmail, password)
       onLogin(u)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
@@ -305,13 +310,24 @@ function Dashboard({ user, onLogout }) {
     setLoading(false)
   }, [user.id])
 
-  useEffect(() => { 
+  useEffect(() => {
     loadData()
     const interval = setInterval(() => {
       fetchNotifications(user.id).then(setNotifications)
     }, 15000)
     return () => clearInterval(interval)
   }, [loadData, user.id])
+
+  // Auto-logout after 10 minutes of inactivity (mouse/key/touch resets timer)
+  useEffect(() => {
+    const INACTIVITY_MS = 10 * 60 * 1000
+    let timer
+    const reset = () => { clearTimeout(timer); timer = setTimeout(onLogout, INACTIVITY_MS) }
+    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click']
+    events.forEach(e => document.addEventListener(e, reset, { passive: true }))
+    reset()
+    return () => { clearTimeout(timer); events.forEach(e => document.removeEventListener(e, reset)) }
+  }, [onLogout])
 
   const handleMarkRead = async (notifId, notif) => {
     setShowNotifs(false)
@@ -754,16 +770,15 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     setInviteMode(false); setInviteSent(false); setInviteMsg(''); setSearchResults([])
   }
 
-  // Local search from allUsers — triggers after 5 chars (no server call needed)
+  // Server search after 5 chars — searches ALL users, excludes existing members
   useEffect(() => {
     if (memberSearch.trim().length < 5) { setSearchResults([]); return }
-    const q = memberSearch.trim().toLowerCase()
-    const filtered = (allUsers || [])
-      .filter(u => u.id !== currentUser.id && !memberIds.has(u.id))
-      .filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
-      .slice(0, 8)
-    setSearchResults(filtered)
-  }, [memberSearch, allUsers])
+    setSearchLoading(true)
+    searchUsers(memberSearch.trim(), group.id)
+      .then(results => setSearchResults(results.filter(u => u.id !== currentUser.id)))
+      .catch(() => setSearchResults([]))
+      .finally(() => setSearchLoading(false))
+  }, [memberSearch, group.id, currentUser.id])
 
   const handleAddMemberById = async (userId) => {
     setMemberLoading(true); setMemberError('')
