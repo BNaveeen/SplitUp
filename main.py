@@ -13,6 +13,9 @@ from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, P
 
 app = FastAPI(title="Splitwise Clone API")
 
+# Captured at startup — lets sync endpoints schedule coroutines on the real event loop
+_main_loop: asyncio.AbstractEventLoop = None
+
 # ── WebSocket Connection Manager ──────────────────────────────────────────────
 class ConnectionManager:
     def __init__(self):
@@ -28,11 +31,14 @@ class ConnectionManager:
             conns.remove(websocket)
 
     async def send_to_user(self, user_id: int, data: dict):
+        dead = []
         for ws in list(self.active.get(user_id, [])):
             try:
                 await ws.send_text(json.dumps(data))
             except Exception:
-                pass
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(user_id, ws)
 
     async def broadcast_to_users(self, user_ids: List[int], data: dict):
         for uid in user_ids:
@@ -42,7 +48,7 @@ manager = ConnectionManager()
 
 def _push_group_event(db: Session, group_id: int):
     """Broadcast a group_refresh event to all members of a group via WebSocket."""
-    if not group_id:
+    if not group_id or not _main_loop:
         return
     group = db.query(Group).filter(Group.id == group_id).first()
     if not group:
@@ -53,9 +59,7 @@ def _push_group_event(db: Session, group_id: int):
     async def _do():
         await manager.broadcast_to_users(member_ids, {"type": "group_refresh", "group_id": group_id})
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_do())
+        asyncio.run_coroutine_threadsafe(_do(), _main_loop)
     except Exception:
         pass
 
@@ -446,9 +450,13 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
     await manager.connect(user_id, websocket)
     try:
         while True:
-            # Keep connection alive; server pushes data proactively
-            await websocket.receive_text()
-    except WebSocketDisconnect:
+            # Wait for client ping or any message; also sends server-side ping every 25s
+            # to keep the connection alive through proxies and Render's idle timeout
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=25)
+            except asyncio.TimeoutError:
+                await websocket.send_text('{"type":"ping"}')
+    except (WebSocketDisconnect, Exception):
         manager.disconnect(user_id, websocket)
 
 @app.put("/users/{user_id}", response_model=UserResponse)
@@ -1096,6 +1104,8 @@ async def _deletion_scheduler():
 
 @app.on_event("startup")
 async def startup_event():
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     asyncio.create_task(_deletion_scheduler())
     # One-time cleanup: remove fake "Payment" expenses created by the old approve_settlement code.
     # Those were auto-created with description="Payment" and payer_id != created_by_id.
@@ -1553,7 +1563,8 @@ def _add_notification(db: Session, user_id: int, message: str, expense_id: int =
     n = Notification(user_id=user_id, message=message, expense_id=expense_id, group_id=group_id, is_read=0)
     db.add(n)
     db.flush()  # get ID without full commit
-    # Schedule non-blocking WS push (runs after current DB transaction commits)
+    if not _main_loop:
+        return
     async def _push():
         await manager.send_to_user(user_id, {
             "type": "notification",
@@ -1564,11 +1575,8 @@ def _add_notification(db: Session, user_id: int, message: str, expense_id: int =
             "is_read": 0,
             "created_at": datetime.utcnow().isoformat()
         })
-    import asyncio
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_push())
+        asyncio.run_coroutine_threadsafe(_push(), _main_loop)
     except Exception:
         pass
 
