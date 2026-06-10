@@ -1,0 +1,11 @@
+{
+  "appId": "com.splitup.app",
+  "appName": "SplitUp",
+  "webDir": "dist-mobile",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

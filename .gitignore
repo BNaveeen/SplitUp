@@ -14,8 +14,15 @@ __pycache__/
 # Node
 node_modules/
 dist/
-build/
+dist-mobile/
 .npm/
+
+# Capacitor — keep ios/ and android/ source, exclude build output only
+frontend/android/app/build/
+frontend/android/.gradle/
+frontend/android/build/
+frontend/ios/App/build/
+frontend/ios/App/DerivedData/
 
 # Database
 *.db

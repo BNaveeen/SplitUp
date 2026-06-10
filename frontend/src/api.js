@@ -1,4 +1,11 @@
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.startsWith('192.') || window.location.hostname.startsWith('172.');
+// Capacitor native apps run with hostname=localhost but have no dev proxy — always use prod
+const isNative = typeof window !== 'undefined' && !!window.Capacitor?.isNativePlatform?.()
+const isLocal = !isNative && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.startsWith('192.') ||
+  window.location.hostname.startsWith('172.')
+)
 const API_URL = isLocal ? '/api' : 'https://splitup-qttj.onrender.com';
 
 async function handleResponse(res) {
@@ -223,3 +230,4 @@ export const getWsUrl = (userId) => {
   const wsHost = isLocal ? `${window.location.hostname}:8001` : 'splitup-qttj.onrender.com';
   return `${wsProtocol}://${wsHost}/ws/${userId}`;
 };
+
