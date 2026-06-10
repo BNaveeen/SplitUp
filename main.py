@@ -172,6 +172,12 @@ class NotificationResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class SettlementStatusEntry(BaseModel):
+    user_id: int
+    user_name: str
+    amount: float
+    status: str  # "cleared" | "pending" | "unpaid"
+
 class ExpenseResponse(BaseModel):
     id: int
     description: str
@@ -188,6 +194,7 @@ class ExpenseResponse(BaseModel):
     last_message_at: Optional[str] = None
     last_message_text: Optional[str] = None
     created_at: Optional[str] = None
+    settlement_statuses: List[SettlementStatusEntry] = []
     class Config:
         from_attributes = True
 
@@ -400,7 +407,7 @@ def admin_list_expenses(admin_id: int, status: Optional[str] = None, db: Session
     if status:
         q = q.filter(Expense.status == status)
     expenses = q.order_by(Expense.date.desc()).limit(200).all()
-    return [_format_expense(e) for e in expenses]
+    return [_format_expense(e, db) for e in expenses]
 
 @app.get("/admin/settlements")
 def admin_list_settlements(admin_id: int, db: Session = Depends(get_db)):
@@ -556,7 +563,7 @@ def get_user_expenses(user_id: int, db: Session = Depends(get_db)):
         .order_by(Expense.date.desc())
         .all()
     )
-    return [_format_expense(e) for e in expenses]
+    return [_format_expense(e, db) for e in expenses]
 
 # ── Group Routes ──────────────────────────────────────────────────────────────
 
@@ -684,7 +691,7 @@ def get_group_expenses(group_id: int, db: Session = Depends(get_db)):
         .order_by(Expense.date.desc())
         .all()
     )
-    return [_format_expense(e) for e in expenses]
+    return [_format_expense(e, db) for e in expenses]
 
 @app.get("/groups/{group_id}/balances/", response_model=List[BalanceEntry])
 def get_group_balances(group_id: int, db: Session = Depends(get_db)):
@@ -965,7 +972,7 @@ def split_expense(expense: ExpenseCreate, db: Session = Depends(get_db)):
     db.commit()
     _push_group_event(db, new_expense.group_id)
 
-    return _format_expense(new_expense)
+    return _format_expense(new_expense, db)
 
 @app.put("/expenses/{expense_id}", response_model=ExpenseResponse)
 def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session = Depends(get_db)):
@@ -1030,7 +1037,7 @@ def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session =
     db.commit()
     _push_group_event(db, expense.group_id)
 
-    return _format_expense(expense)
+    return _format_expense(expense, db)
 
 @app.delete("/expenses/{expense_id}")
 def delete_expense(expense_id: int, requester_id: int, db: Session = Depends(get_db)):
@@ -1588,13 +1595,32 @@ def _add_system_message(db: Session, expense_id: int, user_id: int, text: str):
     msg = ExpenseMessage(expense_id=expense_id, user_id=user_id, text=formatted_text, is_system=1)
     db.add(msg)
 
-def _format_expense(e: Expense) -> dict:
+def _format_expense(e: Expense, db=None) -> dict:
     from database import ExpenseDeletionApproval
-    
+
     last_msg = getattr(e, "messages", [])
     last_message_at = last_msg[-1].created_at.isoformat() if last_msg else None
     last_message_text = last_msg[-1].text if last_msg else None
-    
+
+    # Build per-debtor settlement status (exclude payer's own split)
+    settlement_statuses = []
+    if db is not None:
+        from database import Settlement as St
+        s_map = {s.payer_id: s.status for s in db.query(St).filter(
+            St.expense_id == e.id,
+            St.status.in_(["pending", "approved"])
+        ).all()}
+        for split in e.splits:
+            if split.user_id == e.payer_id:
+                continue
+            st = s_map.get(split.user_id)
+            settlement_statuses.append({
+                "user_id": split.user_id,
+                "user_name": split.user.name if split.user else "?",
+                "amount": float(split.amount),
+                "status": "cleared" if st == "approved" else "pending" if st == "pending" else "unpaid",
+            })
+
     return {
         "id": e.id,
         "description": e.description,
@@ -1614,4 +1640,5 @@ def _format_expense(e: Expense) -> dict:
         "last_message_at": last_message_at,
         "last_message_text": last_message_text,
         "created_at": e.created_at.isoformat() if getattr(e, "created_at", None) else e.date.isoformat() if e.date else None,
+        "settlement_statuses": settlement_statuses,
     }

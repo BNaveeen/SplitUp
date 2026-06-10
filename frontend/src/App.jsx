@@ -2059,6 +2059,25 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                     </div>
                   </div>
 
+                  {/* Settlement status chips — who has paid / is waiting / still owes */}
+                  {e.settlement_statuses?.length > 0 && e.status === 'active' && (
+                    <div className="flex flex-wrap gap-1.5 pt-2">
+                      {e.settlement_statuses.map(ss => (
+                        <span key={ss.user_id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                          ss.status === 'cleared'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                            : ss.status === 'pending'
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/25'
+                            : 'bg-slate-700/40 text-slate-500 border-slate-600/30'
+                        }`}>
+                          {ss.status === 'cleared' ? '✓' : ss.status === 'pending' ? '⏳' : '·'}
+                          {ss.user_id === currentUser.id ? 'You' : ss.user_name}
+                          {ss.status === 'cleared' ? ' paid' : ss.status === 'pending' ? ' waiting' : ` owes £${ss.amount.toFixed(2)}`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Actions Row */}
                   <div className="flex items-center justify-between pt-2 border-t border-slate-700/30 mt-1 relative z-10">
                     <div className="flex items-center">
