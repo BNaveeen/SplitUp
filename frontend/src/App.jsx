@@ -752,17 +752,16 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     setInviteMode(false); setInviteSent(false); setInviteMsg(''); setSearchResults([])
   }
 
-  // Live server search — triggers after 5 chars
+  // Local search from allUsers — triggers after 5 chars (no server call needed)
   useEffect(() => {
-    if (memberSearch.trim().length < 5) { setSearchResults([]); setSearchLoading(false); return }
-    setSearchLoading(true)
-    const timer = setTimeout(() => {
-      searchUsers(memberSearch.trim(), group.id)
-        .then(results => setSearchResults(results.filter(u => u.id !== currentUser.id && !memberIds.has(u.id))))
-        .finally(() => setSearchLoading(false))
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [memberSearch, group.id])
+    if (memberSearch.trim().length < 5) { setSearchResults([]); return }
+    const q = memberSearch.trim().toLowerCase()
+    const filtered = (allUsers || [])
+      .filter(u => u.id !== currentUser.id && !memberIds.has(u.id))
+      .filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+      .slice(0, 8)
+    setSearchResults(filtered)
+  }, [memberSearch, allUsers])
 
   const handleAddMemberById = async (userId) => {
     setMemberLoading(true); setMemberError('')
@@ -976,14 +975,50 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                   )}
                 </div>
               )
-            }) : members.map(m => (
-              <div key={m.id} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
-                <div className={`h-7 w-7 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
-                  {m.name.charAt(0).toUpperCase()}
+            }) : members.map(m => {
+              const isMe = m.id === currentUser.id
+              const isOpen = memberActionsId === m.id
+              return (
+                <div key={m.id} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
+                  <div className={`h-7 w-7 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                    {m.name.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-xs text-slate-300 flex-1">{isMe ? 'You' : m.name}</span>
+                  {/* Show gear for non-self members when admin (incl. fallback) */}
+                  {isGroupAdmin && !isMe && (
+                    <div className="relative shrink-0">
+                      <button onClick={e => { e.stopPropagation(); setMemberActionsId(isOpen ? null : m.id) }}
+                        className="p-1 text-slate-500 hover:text-slate-300 rounded-lg transition-colors">
+                        <Settings className="h-3.5 w-3.5" />
+                      </button>
+                      <AnimatePresence>
+                        {isOpen && (
+                          <motion.div initial={{ opacity: 0, scale: 0.9, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.9, y: -4 }} transition={{ duration: 0.12 }}
+                            className="absolute right-0 top-7 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden"
+                            onClick={e => e.stopPropagation()}>
+                            {isSuperAdmin && (
+                              <button onClick={() => handleSetRole(m.id, 'admin')}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-indigo-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
+                                <Shield className="h-3.5 w-3.5" /> Make Admin
+                              </button>
+                            )}
+                            <button onClick={() => handleToggleActive(m.id)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-amber-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
+                              <UserX className="h-3.5 w-3.5" /> Deactivate
+                            </button>
+                            <button onClick={() => handleRemoveMember(m.id, m.name)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" /> Remove from group
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
                 </div>
-                <span className="text-xs text-slate-300">{m.id === currentUser.id ? 'You' : m.name}</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <AnimatePresence>
@@ -1039,15 +1074,11 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
                       {/* Search results dropdown */}
                       <AnimatePresence>
-                        {memberSearch.trim().length >= 5 && (searchLoading || searchResults.length > 0) && (
+                        {memberSearch.trim().length >= 5 && searchResults.length > 0 && (
                           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                             transition={{ duration: 0.15 }}
                             className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl z-50 overflow-hidden max-h-52 overflow-y-auto">
-                            {searchLoading ? (
-                              <div className="flex items-center justify-center py-4 gap-2 text-xs text-slate-400">
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
-                              </div>
-                            ) : searchResults.map((u, i) => (
+                            {searchResults.map((u, i) => (
                               <button key={u.id} type="button"
                                 onMouseDown={e => e.preventDefault()}
                                 onClick={() => handleAddMemberById(u.id)}
@@ -1068,7 +1099,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
                       {/* No results after typing enough */}
                       <AnimatePresence>
-                        {memberSearch.trim().length >= 5 && !searchLoading && searchResults.length === 0 && (
+                        {memberSearch.trim().length >= 5 && searchResults.length === 0 && (
                           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                             className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl z-50 px-3 py-3 text-center">
                             <p className="text-xs text-slate-400">No users found</p>
