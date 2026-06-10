@@ -215,13 +215,14 @@ class BalanceEntry(BaseModel):
 @app.post("/register/", response_model=UserResponse)
 def register_user(user: UserRegister, db: Session = Depends(get_db)):
     """Register a new user with password."""
-    db_user = db.query(User).filter(User.email == user.email).first()
+    normalized_email = user.email.strip().lower()
+    db_user = db.query(User).filter(User.email.ilike(normalized_email)).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-        
+
     # First registered user is automatically an admin
     is_first = db.query(User).count() == 0
-    new_user = User(name=user.name, email=user.email, password=user.password, is_admin=is_first)
+    new_user = User(name=user.name, email=normalized_email, password=user.password, is_admin=is_first)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -230,7 +231,9 @@ def register_user(user: UserRegister, db: Session = Depends(get_db)):
 @app.post("/login/", response_model=UserResponse)
 def login_user(user: UserLogin, db: Session = Depends(get_db)):
     """Login a user."""
-    db_user = db.query(User).filter(User.email == user.email, User.password == user.password).first()
+    db_user = db.query(User).filter(
+        User.email.ilike(user.email.strip()), User.password == user.password
+    ).first()
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return db_user
@@ -566,7 +569,7 @@ def add_group_member(group_id: int, req: AddMemberRequest, db: Session = Depends
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    user = db.query(User).filter(User.email == req.email).first()
+    user = db.query(User).filter(User.email.ilike(req.email.strip())).first()
     if not user:
         raise HTTPException(status_code=404, detail=f"No user found with email '{req.email}'")
 
