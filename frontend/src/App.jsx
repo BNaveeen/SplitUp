@@ -2470,7 +2470,9 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
   const [success, setSuccess]         = useState(false)
   const [scanning, setScanning]       = useState(false)
   const [scanError, setScanError]     = useState('')
+  const [showScanMenu, setShowScanMenu] = useState(false)
   const scanInputRef                  = useRef(null)
+  const scanCameraRef                 = useRef(null)
   const submittingRef                 = useRef(false)
   const formRef                       = useRef(null)
 
@@ -2516,6 +2518,14 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
       e.target.value = ''
     }
   }
+
+  // Close scan menu on outside click
+  useEffect(() => {
+    if (!showScanMenu) return
+    const close = () => setShowScanMenu(false)
+    document.addEventListener('pointerdown', close, { once: true })
+    return () => document.removeEventListener('pointerdown', close)
+  }, [showScanMenu])
 
   // When group changes, default to all group members (only if not editing)
   useEffect(() => {
@@ -2665,16 +2675,37 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
               <h3 className="font-bold text-white text-lg">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
               <div className="flex items-center gap-2">
                 {!initialExpense && (
-                  <>
-                    <input ref={scanInputRef} type="file" accept="image/*" capture="environment"
+                  <div className="relative">
+                    {/* hidden inputs — one for camera, one for file picker */}
+                    <input ref={scanCameraRef} type="file" accept="image/*" capture="environment"
                       className="hidden" onChange={handleScanReceipt} />
-                    <button type="button" onClick={() => scanInputRef.current?.click()}
+                    <input ref={scanInputRef} type="file" accept="image/*"
+                      className="hidden" onChange={handleScanReceipt} />
+
+                    <button type="button"
                       disabled={scanning}
+                      onClick={() => setShowScanMenu(v => !v)}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait">
                       {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>📷</span>}
                       {scanning ? 'Scanning…' : 'Scan Receipt'}
                     </button>
-                  </>
+
+                    {showScanMenu && !scanning && (
+                      <div className="absolute right-0 top-full mt-1.5 w-44 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-20 overflow-hidden">
+                        <button type="button"
+                          onClick={() => { setShowScanMenu(false); scanCameraRef.current?.click() }}
+                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-slate-200 hover:bg-slate-700 transition-colors">
+                          <span>📷</span> Open Camera
+                        </button>
+                        <div className="border-t border-slate-700" />
+                        <button type="button"
+                          onClick={() => { setShowScanMenu(false); scanInputRef.current?.click() }}
+                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-slate-200 hover:bg-slate-700 transition-colors">
+                          <span>📁</span> Upload from Device
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
                 <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
                   <X className="h-5 w-5" />
