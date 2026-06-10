@@ -2519,11 +2519,16 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     }
   }
 
-  // Close scan menu on outside click
+  const scanMenuRef = useRef(null)
+
+  // Close scan menu only when clicking outside the dropdown
   useEffect(() => {
     if (!showScanMenu) return
-    const close = () => setShowScanMenu(false)
-    document.addEventListener('pointerdown', close, { once: true })
+    const close = (e) => {
+      if (scanMenuRef.current?.contains(e.target)) return
+      setShowScanMenu(false)
+    }
+    document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [showScanMenu])
 
@@ -2675,7 +2680,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
               <h3 className="font-bold text-white text-lg">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
               <div className="flex items-center gap-2">
                 {!initialExpense && (
-                  <div className="relative">
+                  <div ref={scanMenuRef} className="relative">
                     {/* hidden inputs — one for camera, one for file picker */}
                     <input ref={scanCameraRef} type="file" accept="image/*" capture="environment"
                       className="hidden" onChange={handleScanReceipt} />
