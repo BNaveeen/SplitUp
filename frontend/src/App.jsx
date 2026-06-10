@@ -658,8 +658,10 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   // If memberships hasn't loaded yet (API not deployed / slow), fall back to
   // allowing all members to add people — the backend enforces real permissions.
   const membershipsLoaded = memberships.length > 0
+  // For Add button: fall back to true while memberships is loading so creators don't get locked out
   const isGroupAdmin = myRole === 'admin' || myRole === 'super_admin' || !membershipsLoaded
-  const isSuperAdmin = myRole === 'super_admin' || (!membershipsLoaded && memberships.length === 0)
+  // For gear/role controls: only true once we have confirmed role data
+  const isSuperAdmin = myRole === 'super_admin'
 
   const markChatViewed = useCallback((expId) => {
     setViewedChats(prev => {
@@ -977,45 +979,13 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               )
             }) : members.map(m => {
               const isMe = m.id === currentUser.id
-              const isOpen = memberActionsId === m.id
               return (
                 <div key={m.id} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
                   <div className={`h-7 w-7 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
                     {m.name.charAt(0).toUpperCase()}
                   </div>
                   <span className="text-xs text-slate-300 flex-1">{isMe ? 'You' : m.name}</span>
-                  {/* Show gear for non-self members when admin (incl. fallback) */}
-                  {isGroupAdmin && !isMe && (
-                    <div className="relative shrink-0">
-                      <button onClick={e => { e.stopPropagation(); setMemberActionsId(isOpen ? null : m.id) }}
-                        className="p-1 text-slate-500 hover:text-slate-300 rounded-lg transition-colors">
-                        <Settings className="h-3.5 w-3.5" />
-                      </button>
-                      <AnimatePresence>
-                        {isOpen && (
-                          <motion.div initial={{ opacity: 0, scale: 0.9, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.9, y: -4 }} transition={{ duration: 0.12 }}
-                            className="absolute right-0 top-7 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden"
-                            onClick={e => e.stopPropagation()}>
-                            {isSuperAdmin && (
-                              <button onClick={() => handleSetRole(m.id, 'admin')}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-indigo-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
-                                <Shield className="h-3.5 w-3.5" /> Make Admin
-                              </button>
-                            )}
-                            <button onClick={() => handleToggleActive(m.id)}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-amber-300 hover:bg-slate-700/60 transition-colors border-b border-slate-700/50">
-                              <UserX className="h-3.5 w-3.5" /> Deactivate
-                            </button>
-                            <button onClick={() => handleRemoveMember(m.id, m.name)}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 transition-colors">
-                              <Trash2 className="h-3.5 w-3.5" /> Remove from group
-                            </button>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )}
+                  <span className="text-[10px] text-slate-600 italic">loading…</span>
                 </div>
               )
             })}
