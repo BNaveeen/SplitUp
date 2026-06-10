@@ -40,6 +40,25 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+def _push_group_event(db: Session, group_id: int):
+    """Broadcast a group_refresh event to all members of a group via WebSocket."""
+    if not group_id:
+        return
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        return
+    member_ids = [m.id for m in group.members]
+    if not member_ids:
+        return
+    async def _do():
+        await manager.broadcast_to_users(member_ids, {"type": "group_refresh", "group_id": group_id})
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_do())
+    except Exception:
+        pass
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -906,6 +925,7 @@ def split_expense(expense: ExpenseCreate, db: Session = Depends(get_db)):
     _add_system_message(db, new_expense.id, new_expense.created_by_id,
         f"created this expense — £{float(new_expense.amount):.2f} paid by {payer.name}, split between: {split_names}")
     db.commit()
+    _push_group_event(db, new_expense.group_id)
 
     return _format_expense(new_expense)
 
@@ -970,6 +990,7 @@ def update_expense(expense_id: int, expense_update: ExpenseCreate, db: Session =
         if uid != expense_update.created_by_id:
             _add_notification(db, uid, f"Expense updated: {expense.description}", expense_id=expense.id, group_id=expense.group_id)
     db.commit()
+    _push_group_event(db, expense.group_id)
 
     return _format_expense(expense)
 
@@ -994,6 +1015,7 @@ def delete_expense(expense_id: int, requester_id: int, db: Session = Depends(get
     if len(involved_user_ids) == 1 and requester_id in involved_user_ids:
         expense.status = "deleted"
         db.commit()
+        _push_group_event(db, expense.group_id)
         return {"message": "Expense deleted immediately"}
 
     expense.status = "pending_deletion"
@@ -1012,6 +1034,7 @@ def delete_expense(expense_id: int, requester_id: int, db: Session = Depends(get
 
     _add_system_message(db, expense.id, requester_id, "Requested deletion of this expense.")
     db.commit()
+    _push_group_event(db, expense.group_id)
     return {"message": "Deletion request initiated"}
 
 async def _deletion_scheduler():
@@ -1026,11 +1049,16 @@ async def _deletion_scheduler():
                 Expense.deletion_approved_at != None,
                 Expense.deletion_approved_at <= cutoff
             ).all()
+            group_ids = set()
             for expense in expired:
                 expense.status = "deleted"
                 _add_system_message(db, expense.id, expense.created_by_id, "Expense permanently deleted.")
+                if expense.group_id:
+                    group_ids.add(expense.group_id)
             if expired:
                 db.commit()
+                for gid in group_ids:
+                    _push_group_event(db, gid)
         except Exception:
             pass
         finally:
@@ -1076,16 +1104,20 @@ def approve_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db
             db.flush()
             _add_system_message(db, expense_id, user_id, "Deletion request was rejected and cancelled.")
             db.commit()
+            _push_group_event(db, expense.group_id)
             return {"message": "Deletion was rejected by someone and cancelled"}
         else:
             expense.status = "approved_for_deletion"
             expense.deletion_approved_at = datetime.utcnow()
             _add_system_message(db, expense_id, user_id, "All users approved deletion. Deleting in 10 minutes.")
             db.commit()
+            _push_group_event(db, expense.group_id)
             return {"message": "All approved. Expense will be deleted in 10 minutes."}
-            
+
+    exp = db.query(Expense).filter(Expense.id == expense_id).first()
     _add_system_message(db, expense_id, user_id, "Approved the deletion request.")
     db.commit()
+    _push_group_event(db, exp.group_id if exp else None)
     return {"message": "Approval recorded"}
 
 @app.post("/expenses/{expense_id}/reject_deletion")
@@ -1120,10 +1152,12 @@ def reject_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)
         db.flush()
         _add_system_message(db, expense_id, user_id, "Rejected the deletion request. Deletion cancelled.")
         db.commit()
+        _push_group_event(db, expense.group_id)
         return {"message": "Deletion rejected by at least one user and cancelled"}
-        
+
     _add_system_message(db, expense_id, user_id, "Rejected the deletion request.")
     db.commit()
+    _push_group_event(db, expense.group_id)
     return {"message": "Rejection recorded"}
 
 @app.post("/expenses/{expense_id}/cancel_deletion")
@@ -1144,6 +1178,7 @@ def cancel_deletion(expense_id: int, user_id: int, db: Session = Depends(get_db)
     db.flush()
     _add_system_message(db, expense_id, user_id, "Cancelled the deletion.")
     db.commit()
+    _push_group_event(db, expense.group_id)
     return {"message": "Deletion cancelled"}
 
 @app.get("/expenses/{expense_id}/chat", response_model=List[ExpenseMessageResponse])
@@ -1398,6 +1433,7 @@ def approve_settlement(settlement_id: int, db: Session = Depends(get_db)):
 
     _add_notification(db, settlement.payer_id, f"Your payment of £{settlement.amount} was approved by {settlement.payee.name}!")
     db.commit()
+    _push_group_event(db, settlement.group_id)
     return {"message": "Settlement approved."}
 
 @app.post("/settlements/{settlement_id}/reject")
@@ -1410,6 +1446,7 @@ def reject_settlement(settlement_id: int, db: Session = Depends(get_db)):
     settlement.status = "rejected"
     _add_notification(db, settlement.payer_id, f"Your payment of £{settlement.amount} was rejected by {settlement.payee.name}.")
     db.commit()
+    _push_group_event(db, settlement.group_id)
     return {"message": "Settlement rejected."}
 
 @app.get("/users/{user_id}/pending_settlements", response_model=List[SettlementResponse])
