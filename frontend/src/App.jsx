@@ -2472,6 +2472,32 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
   const [scanError, setScanError]     = useState('')
   const scanInputRef                  = useRef(null)
   const submittingRef                 = useRef(false)
+  const formRef                       = useRef(null)
+
+  // Track visual viewport so the modal stays above the on-screen keyboard
+  const [vpHeight, setVpHeight]       = useState(() => window.visualViewport?.height ?? window.innerHeight)
+  const [vpTop, setVpTop]             = useState(() => window.visualViewport?.offsetTop ?? 0)
+
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const update = () => { setVpHeight(vv.height); setVpTop(vv.offsetTop) }
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update) }
+  }, [])
+
+  // When a field is focused and the keyboard slides up, scroll it near the top of the form
+  const handleFocusCapture = (e) => {
+    if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return
+    setTimeout(() => {
+      const form = formRef.current
+      if (!form) return
+      const elTop  = e.target.getBoundingClientRect().top
+      const frmTop = form.getBoundingClientRect().top
+      form.scrollTo({ top: form.scrollTop + (elTop - frmTop) - 16, behavior: 'smooth' })
+    }, 320) // after keyboard animation
+  }
 
   const handleScanReceipt = async (e) => {
     const file = e.target.files?.[0]
@@ -2616,11 +2642,13 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      style={{ top: vpTop, height: vpHeight }}
+      className="fixed inset-x-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
       onClick={e => e.target === e.currentTarget && onClose()}>
-      <motion.div initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
-        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
+      <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
+        transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+        style={{ maxHeight: Math.min(vpHeight * 0.94, 720) }}
+        className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
 
         {success ? (
           <div className="flex flex-col items-center justify-center py-16 gap-4">
@@ -2633,7 +2661,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         ) : (
           <>
             {/* Modal header */}
-            <div className="sticky top-0 bg-slate-900/95 backdrop-blur-md z-10 flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
+            <div className="shrink-0 bg-slate-900 flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
               <h3 className="font-bold text-white text-lg">{initialExpense ? 'Edit Expense' : 'Add Expense'}</h3>
               <div className="flex items-center gap-2">
                 {!initialExpense && (
@@ -2654,7 +2682,8 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
               </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar">
+            <form ref={formRef} onFocusCapture={handleFocusCapture} onSubmit={handleSubmit}
+              className="flex-1 overflow-y-auto overscroll-contain px-6 py-5 space-y-4 custom-scrollbar">
 
               {scanError && (
                 <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">{scanError}</div>
