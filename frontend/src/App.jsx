@@ -309,6 +309,18 @@ function Dashboard({ user, onLogout }) {
             playNotificationSound()
           } else if (data.type === 'new_message') {
             window.dispatchEvent(new CustomEvent('ws_new_message', { detail: data }))
+          } else if (data.type === 'group_refresh') {
+            // Silently refresh global balances and settlements
+            Promise.all([
+              fetchAllUserBalances(user.id),
+              fetchPendingSettlements(user.id),
+              fetchInitiatedSettlements(user.id)
+            ]).then(([b, ps, is]) => {
+              setGlobalBalances(b)
+              setPendingSettlements(ps)
+              setInitiatedSettlements(is)
+            }).catch(() => {})
+            window.dispatchEvent(new CustomEvent('ws_group_refresh', { detail: { group_id: data.group_id } }))
           }
         } catch (_) {}
       }
@@ -759,15 +771,24 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   useEffect(() => {
     const handleWsMsg = (e) => {
       const data = e.detail
-      setExpenses(prev => prev.map(exp => 
-        exp.id === data.expense_id 
-          ? { ...exp, last_message_at: data.created_at || new Date().toISOString() } 
+      setExpenses(prev => prev.map(exp =>
+        exp.id === data.expense_id
+          ? { ...exp, last_message_at: data.created_at || new Date().toISOString() }
           : exp
       ))
     }
     window.addEventListener('ws_new_message', handleWsMsg)
     return () => window.removeEventListener('ws_new_message', handleWsMsg)
   }, [])
+
+  // Re-fetch group data when any member triggers a balance-affecting action
+  useEffect(() => {
+    const handleGroupRefresh = (e) => {
+      if (e.detail?.group_id === group.id) loadGroupData()
+    }
+    window.addEventListener('ws_group_refresh', handleGroupRefresh)
+    return () => window.removeEventListener('ws_group_refresh', handleGroupRefresh)
+  }, [group.id, loadGroupData])
 
   const handleDeleteExpense = async (expenseId) => {
     if (confirm("Are you sure you want to delete this expense? This will require approval from everyone involved.")) {
