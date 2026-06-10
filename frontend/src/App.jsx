@@ -16,7 +16,8 @@ import {
   fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements,
   fetchInitiatedSettlements,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications,
-  searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive
+  searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
+  renameGroup
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -695,6 +696,8 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const [editingExpense, setEditingExpense] = useState(null)
   const [showValidOnly, setShowValidOnly] = useState(false)
   const [memberActionsId, setMemberActionsId] = useState(null)  // which member's action menu is open
+  const [editingGroupName, setEditingGroupName] = useState(false)
+  const [groupNameDraft, setGroupNameDraft] = useState(group.name)
   const [viewedChats, setViewedChats] = useState(() => {
     try { return JSON.parse(localStorage.getItem(`split_chat_viewed_${currentUser.id}`) || '{}') } catch { return {} }
   })
@@ -924,11 +927,44 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
             <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
               <ArrowLeft className="h-5 w-5" />
             </button>
-            <div className={`h-8 w-8 rounded-lg bg-gradient-to-br ${avatarColor(group.id)} flex items-center justify-center text-sm font-bold text-white`}>
+            <div className={`h-8 w-8 shrink-0 rounded-lg bg-gradient-to-br ${avatarColor(group.id)} flex items-center justify-center text-sm font-bold text-white`}>
               {group.name.charAt(0)}
             </div>
             <div className="flex-1 min-w-0">
-              <h1 className="font-bold text-white truncate">{group.name}</h1>
+              {editingGroupName ? (
+                <form
+                  className="flex items-center gap-1.5"
+                  onSubmit={async (ev) => {
+                    ev.preventDefault()
+                    const trimmed = groupNameDraft.trim()
+                    if (!trimmed || trimmed === group.name) { setEditingGroupName(false); return }
+                    try {
+                      await renameGroup(group.id, trimmed, currentUser.id)
+                      await onGroupUpdated()
+                      setEditingGroupName(false)
+                    } catch (err) { alert(err.message) }
+                  }}
+                >
+                  <input
+                    autoFocus
+                    value={groupNameDraft}
+                    onChange={e => setGroupNameDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') { setGroupNameDraft(group.name); setEditingGroupName(false) } }}
+                    className="flex-1 bg-slate-800 border border-indigo-500 text-white text-sm font-bold rounded-lg px-2 py-0.5 outline-none min-w-0"
+                  />
+                  <button type="submit" className="text-[10px] px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shrink-0">Save</button>
+                  <button type="button" onClick={() => { setGroupNameDraft(group.name); setEditingGroupName(false) }} className="text-[10px] px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg shrink-0">Cancel</button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <h1 className="font-bold text-white truncate">{group.name}</h1>
+                  {isSuperAdmin && (
+                    <button onClick={() => { setGroupNameDraft(group.name); setEditingGroupName(true) }} className="shrink-0 p-0.5 text-slate-500 hover:text-indigo-400 transition-colors" title="Rename group">
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="text-xs text-slate-500">{members.length} member{members.length !== 1 ? 's' : ''}</p>
             </div>
           </div>

@@ -582,6 +582,36 @@ def get_group(group_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Group not found")
     return group
 
+class GroupRenameRequest(BaseModel):
+    name: str
+    requester_id: int
+
+@app.put("/groups/{group_id}/name", response_model=GroupDetailResponse)
+def rename_group(group_id: int, req: GroupRenameRequest, db: Session = Depends(get_db)):
+    """Rename a group. Only the super_admin of the group can do this."""
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    row = db.execute(
+        group_members.select().where(
+            group_members.c.user_id == req.requester_id,
+            group_members.c.group_id == group_id
+        )
+    ).first()
+    if not row or row.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Only the group super admin can rename this group")
+
+    new_name = req.name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Group name cannot be empty")
+
+    group.name = new_name
+    db.commit()
+    db.refresh(group)
+    _push_group_event(db, group_id)
+    return group
+
 @app.post("/groups/{group_id}/members/", response_model=GroupDetailResponse)
 def add_group_member(group_id: int, req: AddMemberRequest, db: Session = Depends(get_db)):
     """Add a user to a group by email."""

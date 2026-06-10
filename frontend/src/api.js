@@ -207,6 +207,13 @@ export const toggleGroupMemberActive = (groupId, userId, adminUserId) =>
     method: 'PUT',
   }).then(handleResponse);
 
+export const renameGroup = (groupId, name, requesterId) =>
+  fetch(`${API_URL}/groups/${groupId}/name`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, requester_id: requesterId }),
+  }).then(handleResponse);
+
 // WebSocket URL helper
 export const getWsUrl = (userId) => {
   const wsProtocol = isLocal ? 'ws' : 'wss';
