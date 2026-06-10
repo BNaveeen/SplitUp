@@ -655,8 +655,11 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   // Derive current user's role in this group
   const myMembership = memberships.find(m => m.user_id === currentUser.id)
   const myRole = myMembership?.role || 'member'
-  const isGroupAdmin = myRole === 'admin' || myRole === 'super_admin'
-  const isSuperAdmin = myRole === 'super_admin'
+  // If memberships hasn't loaded yet (API not deployed / slow), fall back to
+  // allowing all members to add people — the backend enforces real permissions.
+  const membershipsLoaded = memberships.length > 0
+  const isGroupAdmin = myRole === 'admin' || myRole === 'super_admin' || !membershipsLoaded
+  const isSuperAdmin = myRole === 'super_admin' || (!membershipsLoaded && memberships.length === 0)
 
   const markChatViewed = useCallback((expId) => {
     setViewedChats(prev => {
@@ -764,7 +767,16 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const handleAddMemberById = async (userId) => {
     setMemberLoading(true); setMemberError('')
     try {
-      const updated = await addGroupMemberById(group.id, userId, currentUser.id)
+      // Try new endpoint first; fall back to old email-based add if backend not yet updated
+      let updated
+      try {
+        updated = await addGroupMemberById(group.id, userId, currentUser.id)
+      } catch {
+        // fallback: find user email from searchResults and use old endpoint
+        const found = searchResults.find(u => u.id === userId)
+        if (found?.email) updated = await addGroupMember(group.id, found.email)
+        else throw new Error('Could not add member — please try by email')
+      }
       setMembers(updated.members)
       const ms = await fetchGroupMemberships(group.id)
       setMemberships(ms)
