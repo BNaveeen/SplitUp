@@ -317,7 +317,11 @@ function Dashboard({ user, onLogout }) {
 
   // WebSocket: real-time push for notifications and new chat messages
   useEffect(() => {
+    let stopped = false
+    let retryTimer = null
+
     const connect = () => {
+      if (stopped || !getToken()) return
       let ws;
       try {
         ws = new WebSocket(getWsUrl(user.id))
@@ -351,10 +355,21 @@ function Dashboard({ user, onLogout }) {
           }
         } catch (_) {}
       }
-      ws.onclose = () => setTimeout(connect, 3000)
+      ws.onclose = () => {
+        if (stopped || !getToken()) return
+        retryTimer = setTimeout(connect, 3000)
+      }
     }
+
+    const onAuthExpired = () => { stopped = true; clearTimeout(retryTimer) }
+    window.addEventListener('auth_expired', onAuthExpired)
     connect()
-    return () => { wsRef.current?.close() }
+    return () => {
+      stopped = true
+      clearTimeout(retryTimer)
+      window.removeEventListener('auth_expired', onAuthExpired)
+      wsRef.current?.close()
+    }
   }, [user.id])
 
   const loadData = useCallback(async () => {
