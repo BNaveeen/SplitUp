@@ -17,7 +17,7 @@ import {
   fetchInitiatedSettlements,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
-  renameGroup, fetchHealth
+  renameGroup, fetchHealth, setToken, clearToken, getToken
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -148,15 +148,17 @@ export default function App() {
   // Initialize immediately from localStorage so refresh never flashes the login page
   const [user, setUser] = useState(() => {
     try {
+      // Only rehydrate if we also have a valid token
       const saved = localStorage.getItem('splitclone_user')
-      return saved ? JSON.parse(saved) : null
+      const token = localStorage.getItem('splitclone_token')
+      return (saved && token) ? JSON.parse(saved) : null
     } catch { return null }
   })
 
   useEffect(() => {
     if (!user) return
-    // Background refresh to pick up is_admin changes etc. — keep session even if server is slow
-    fetchUsers(user.id)
+    // Background refresh to pick up is_admin changes — drop session if token is invalid (401 fires auth_expired)
+    fetchUsers()
       .then(users => {
         const freshUser = Array.isArray(users) && users.find(u => u.id === user.id)
         if (freshUser) {
@@ -167,8 +169,23 @@ export default function App() {
       .catch(() => {})
   }, [])
 
-  const handleLogin  = (u) => { setUser(u); localStorage.setItem('splitclone_user', JSON.stringify(u)) }
-  const handleLogout = ()  => { setUser(null); localStorage.removeItem('splitclone_user') }
+  const handleLogin  = ({ access_token, user: u }) => {
+    setToken(access_token)
+    setUser(u)
+    localStorage.setItem('splitclone_user', JSON.stringify(u))
+  }
+  const handleLogout = () => {
+    clearToken()
+    setUser(null)
+    localStorage.removeItem('splitclone_user')
+  }
+
+  // Force logout when any API call receives a 401
+  useEffect(() => {
+    const onExpired = () => handleLogout()
+    window.addEventListener('auth_expired', onExpired)
+    return () => window.removeEventListener('auth_expired', onExpired)
+  }, [])
 
   return (
     <div className="min-h-screen bg-[#1a1a2e] text-slate-100 font-sans overflow-hidden relative">
@@ -198,10 +215,11 @@ function LoginScreen({ onLogin }) {
     e.preventDefault(); setError(''); setLoading(true)
     try {
       const normalizedEmail = email.trim().toLowerCase()
-      const u = isLogin
+      // Server now returns { access_token, user } for both login and register
+      const resp = isLogin
         ? await loginUser(normalizedEmail, password)
         : await registerUser(name.trim(), normalizedEmail, password)
-      onLogin(u)
+      onLogin(resp)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -339,7 +357,7 @@ function Dashboard({ user, onLogout }) {
     try {
       const [g, u, n, b, ps, is] = await Promise.all([
         fetchUserGroups(user.id),
-        fetchUsers(user.id),
+        fetchUsers(),
         fetchNotifications(user.id),
         fetchAllUserBalances(user.id),
         fetchPendingSettlements(user.id),
@@ -701,8 +719,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const [inviteSent, setInviteSent] = useState(false)
   const [inviteMsg, setInviteMsg] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
-  const [searchResults, setSearchResults] = useState([])  // server search results
-  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchResults, setSearchResults] = useState([])
   const [editingExpense, setEditingExpense] = useState(null)
   const [showValidOnly, setShowValidOnly] = useState(false)
   const [memberActionsId, setMemberActionsId] = useState(null)  // which member's action menu is open
@@ -843,15 +860,44 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     setInviteMode(false); setInviteSent(false); setInviteMsg(''); setSearchResults([])
   }
 
-  // Server search after 5 chars — searches ALL users, excludes existing members
+  // 2-4 chars: local contacts only. 5+ chars: local first, then debounced DB search.
   useEffect(() => {
-    if (memberSearch.trim().length < 5) { setSearchResults([]); return }
-    setSearchLoading(true)
-    searchUsers(memberSearch.trim(), group.id)
-      .then(results => setSearchResults(results.filter(u => u.id !== currentUser.id)))
-      .catch(() => setSearchResults([]))
-      .finally(() => setSearchLoading(false))
-  }, [memberSearch, group.id, currentUser.id])
+    const q = memberSearch.trim().toLowerCase()
+    if (q.length < 2) { setSearchResults([]); return }
+
+    const existingIds = new Set(members.map(m => m.user_id ?? m.id))
+    existingIds.add(currentUser.id)
+
+    const local = allUsers.filter(u =>
+      !existingIds.has(u.id) &&
+      (u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+    )
+
+    if (q.length < 5) {
+      setSearchResults(local.slice(0, 10))
+      return
+    }
+
+    // Show local hits immediately, then fire DB search after 350ms debounce
+    setSearchResults(local.slice(0, 10))
+    const localIds = new Set(local.map(u => u.id))
+    let cancelled = false
+
+    const timer = setTimeout(() => {
+      searchUsers(memberSearch.trim(), group.id)
+        .then(remote => {
+          if (cancelled) return
+          const extra = remote.filter(u => !existingIds.has(u.id) && !localIds.has(u.id))
+          setSearchResults(prev => {
+            const prevIds = new Set(prev.map(u => u.id))
+            return [...prev, ...extra.filter(u => !prevIds.has(u.id))].slice(0, 15)
+          })
+        })
+        .catch(() => {})
+    }, 350)
+
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [memberSearch, members, allUsers, currentUser.id, group.id])
 
   const handleAddMemberById = async (userId) => {
     setMemberLoading(true); setMemberError('')
@@ -1137,12 +1183,12 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                       <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 z-10" />
                       <input autoFocus type="text" value={memberSearch}
                         onChange={e => setMemberSearch(e.target.value)}
-                        placeholder="Type 5+ chars to search all users…"
+                        placeholder="Search by name or email…"
                         className="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 text-sm" />
 
                       {/* Search results dropdown */}
                       <AnimatePresence>
-                        {memberSearch.trim().length >= 5 && searchResults.length > 0 && (
+                        {memberSearch.trim().length >= 2 && searchResults.length > 0 && (
                           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                             transition={{ duration: 0.15 }}
                             className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl z-50 overflow-hidden max-h-52 overflow-y-auto">
@@ -1165,12 +1211,14 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                         )}
                       </AnimatePresence>
 
-                      {/* No results after typing enough */}
+                      {/* No results — offer email invite */}
                       <AnimatePresence>
-                        {memberSearch.trim().length >= 5 && searchResults.length === 0 && (
+                        {memberSearch.trim().length >= 2 && searchResults.length === 0 && (
                           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                             className="absolute left-0 right-0 top-full mt-1 bg-slate-800 border border-slate-700/60 rounded-xl shadow-2xl z-50 px-3 py-3 text-center">
-                            <p className="text-xs text-slate-400">No users found</p>
+                            <p className="text-xs text-slate-400">
+                              {memberSearch.trim().length < 5 ? 'Not in your contacts — type 5+ chars to search all users' : 'No users found'}
+                            </p>
                             <button type="submit" className="text-[11px] text-indigo-400 mt-1 hover:underline">
                               Invite "{memberSearch}" by email →
                             </button>
@@ -1178,9 +1226,6 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                         )}
                       </AnimatePresence>
                     </div>
-                    {memberSearch.trim().length > 0 && memberSearch.trim().length < 5 && (
-                      <p className="text-[11px] text-slate-500 mt-1.5 px-1">{5 - memberSearch.trim().length} more character{5 - memberSearch.trim().length !== 1 ? 's' : ''} to search…</p>
-                    )}
                     {memberError && <p className="text-red-400 text-xs mt-2">{memberError}</p>}
                   </form>
                 )}
@@ -1255,7 +1300,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
         {(showAddExp || editingExpense) && (
           <AddExpenseModal
             currentUser={currentUser}
-            users={allUsers}
+            users={group.members}
             groups={[group]}
             defaultGroupId={group.id}
             initialExpense={editingExpense}
@@ -1303,18 +1348,18 @@ function AdminDashboard({ currentUser, onBack }) {
     setLoading(true)
     try {
       if (tab === 'overview') {
-        const [s, u] = await Promise.all([fetchAdminStats(currentUser.id), fetchAdminUsers(currentUser.id)])
+        const [s, u] = await Promise.all([fetchAdminStats(), fetchAdminUsers()])
         setStats(s); setUsers(u)
       } else if (tab === 'users') {
-        setUsers(await fetchAdminUsers(currentUser.id))
+        setUsers(await fetchAdminUsers())
       } else if (tab === 'groups') {
-        setAdminGroups(await fetchAdminGroups(currentUser.id))
+        setAdminGroups(await fetchAdminGroups())
       } else if (tab === 'expenses') {
-        setAdminExpenses(await fetchAdminExpenses(currentUser.id, expenseFilter || null))
+        setAdminExpenses(await fetchAdminExpenses(expenseFilter || null))
       } else if (tab === 'settlements') {
-        setAdminSettlements(await fetchAdminSettlements(currentUser.id))
+        setAdminSettlements(await fetchAdminSettlements())
       } else if (tab === 'notifications') {
-        setAdminNotifs(await fetchAdminNotifications(currentUser.id, notifUser?.id || null))
+        setAdminNotifs(await fetchAdminNotifications(notifUser?.id || null))
       }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
@@ -1324,22 +1369,22 @@ function AdminDashboard({ currentUser, onBack }) {
 
   const handleDeleteUser = async (id) => {
     if (!confirm('Delete this user? This cannot be undone.')) return
-    try { await deleteAdminUser(id, currentUser.id); setUsers(p => p.filter(u => u.id !== id)) }
+    try { await deleteAdminUser(id); setUsers(p => p.filter(u => u.id !== id)) }
     catch (e) { alert(e.message) }
   }
   const handleToggleAdmin = async (id) => {
-    try { const u = await toggleAdminStatus(id, currentUser.id); setUsers(p => p.map(x => x.id === id ? u : x)) }
+    try { const u = await toggleAdminStatus(id); setUsers(p => p.map(x => x.id === id ? u : x)) }
     catch (e) { alert(e.message) }
   }
   const handleDeleteGroup = async (id) => {
     if (!confirm('Delete this group?')) return
-    try { await deleteAdminGroup(id, currentUser.id); setAdminGroups(p => p.filter(g => g.id !== id)) }
+    try { await deleteAdminGroup(id); setAdminGroups(p => p.filter(g => g.id !== id)) }
     catch (e) { alert(e.message) }
   }
   const handleCreateUser = async (e) => {
     e.preventDefault(); setCreateLoading(true); setCreateError('')
     try {
-      const u = await adminCreateUser(currentUser.id, newName, newEmail, newPassword, newIsAdmin)
+      const u = await adminCreateUser(newName, newEmail, newPassword, newIsAdmin)
       setUsers(p => [...p, u])
       setNewName(''); setNewEmail(''); setNewPassword(''); setNewIsAdmin(false); setShowCreateUser(false)
     } catch (e) { setCreateError(e.message) }
@@ -2516,8 +2561,7 @@ async function runReceiptOCR(file) {
   }
 }
 
-// Compress an image File to a base64 JPEG ≤ ~150KB for DB storage
-function compressImageToBase64(file, maxDim = 1000, quality = 0.65) {
+function compressImageToBase64(file, maxDim = 1400, quality = 0.85) {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const url = URL.createObjectURL(file)
@@ -2528,7 +2572,9 @@ function compressImageToBase64(file, maxDim = 1000, quality = 0.65) {
       canvas.width  = Math.round(img.width  * scale)
       canvas.height = Math.round(img.height * scale)
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', quality))
+      // WebP is ~35% smaller than JPEG at the same quality; fall back to JPEG if unsupported
+      const webp = canvas.toDataURL('image/webp', quality)
+      resolve(webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/jpeg', quality))
     }
     img.onerror = reject
     img.src = url
@@ -2624,6 +2670,15 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     return () => document.removeEventListener('pointerdown', close)
   }, [showScanMenu])
 
+  // Users visible in Paid By + Split — always scoped to the selected group's members
+  const displayUsers = (() => {
+    if (groupId) {
+      const g = groups.find(gr => gr.id === parseInt(groupId))
+      if (g?.members?.length) return g.members
+    }
+    return users
+  })()
+
   // When group changes, default to all group members (only if not editing)
   useEffect(() => {
     if (initialExpense && !groupId) return; // keep initial splits if no group changed explicitly
@@ -2691,7 +2746,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
       }
     } else if (splitMode === 'adjusted') {
       let fixedTotal = 0
-      const activeIds = selectedUsers.length > 0 ? selectedUsers : users.map(u => u.id)
+      const activeIds = selectedUsers.length > 0 ? selectedUsers : displayUsers.map(u => u.id)
       
       activeIds.forEach(uid => {
         const amt = parseFloat(splitValues[uid])
@@ -2850,7 +2905,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                 </label>
                 <select value={payerId} onChange={e => setPayerId(parseInt(e.target.value))}
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 text-slate-100 appearance-none">
-                  {users.map(u => (
+                  {displayUsers.map(u => (
                     <option key={u.id} value={u.id}>{u.id === currentUser.id ? 'You' : u.name}</option>
                   ))}
                 </select>
@@ -2889,7 +2944,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                       {splitMode === 'equal' ? 'Split equally with' : 'People involved'}
                     </label>
                     <div className="flex flex-wrap gap-2">
-                      {users.map(u => {
+                      {displayUsers.map(u => {
                         const sel = selectedUsers.includes(u.id)
                         return (
                           <button key={u.id} type="button" onClick={() => toggleUser(u.id)}
