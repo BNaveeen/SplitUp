@@ -220,7 +220,14 @@ function LoginScreen({ onLogin }) {
         ? await loginUser(normalizedEmail, password)
         : await registerUser(name.trim(), normalizedEmail, password)
       onLogin(resp)
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      const msg = err.message || ''
+      setError(
+        msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('networkerror')
+          ? 'Cannot reach the server. It may be waking up — please wait 30 seconds and try again.'
+          : msg
+      )
+    }
     finally { setLoading(false) }
   }
 
