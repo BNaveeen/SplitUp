@@ -22,6 +22,7 @@ try:
 except ImportError:
     _redis_available = False
 
+from sqlalchemy import text
 from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, PendingInvite, Base, group_members
 from sqlalchemy.orm import selectinload, joinedload
 
@@ -400,6 +401,19 @@ class BalanceEntry(BaseModel):
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+@app.get("/lb-health")
+def lb_health(db: Session = Depends(get_db)):
+    """Load-balancer probe: returns which Render instance handled this request."""
+    import socket, os
+    db.execute(text("SELECT 1"))   # confirm DB is reachable
+    return {
+        "status": "ok",
+        "instance": os.environ.get("RENDER_SERVICE_NAME", "local"),
+        "host": socket.gethostname(),
+        "workers": int(os.environ.get("WEB_CONCURRENCY", 1)),
+        "db": "connected",
+    }
 
 # ── Auth Routes ───────────────────────────────────────────────────────────────
 

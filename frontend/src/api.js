@@ -6,7 +6,68 @@ const isLocal = !isNative && (
   window.location.hostname.startsWith('192.') ||
   window.location.hostname.startsWith('172.')
 )
-const API_URL = isLocal ? '/api' : 'https://splitup-qttj.onrender.com';
+
+// ── Load Balancer ─────────────────────────────────────────────────────────────
+// List all backend instances here. All must share the same JWT_SECRET and DATABASE_URL.
+// To scale: deploy another Render service and add its URL to this array.
+const PROD_BACKENDS = [
+  'https://splitup-qttj.onrender.com',
+  // 'https://splitup-b.onrender.com',   // ← add more instances here
+]
+
+// BackendPool: round-robin across healthy backends with circuit breaker per instance.
+// Circuit opens after FAIL_THRESHOLD consecutive network errors → backend is skipped
+// for RECOVERY_MS before being retried.
+class BackendPool {
+  constructor(urls) {
+    // Shuffle at page load so concurrent users spread naturally across backends
+    this._urls = [...urls]
+    for (let i = this._urls.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this._urls[i], this._urls[j]] = [this._urls[j], this._urls[i]]
+    }
+    this._failures = new Array(this._urls.length).fill(0)
+    this._idx = 0
+    this._FAIL_THRESHOLD = 3
+    this._RECOVERY_MS = 30_000
+  }
+
+  // Returns index of next healthy backend (round-robin, skips open circuits)
+  pick() {
+    for (let i = 0; i < this._urls.length; i++) {
+      const k = (this._idx + i) % this._urls.length
+      if (this._failures[k] < this._FAIL_THRESHOLD) {
+        this._idx = (k + 1) % this._urls.length
+        return k
+      }
+    }
+    // All circuits open — reset and use first (fail-open so app doesn't lock up)
+    this._failures.fill(0)
+    this._idx = 1
+    return 0
+  }
+
+  url(k)     { return this._urls[k] }
+  size()     { return this._urls.length }
+
+  success(k) { this._failures[k] = 0 }
+
+  failure(k) {
+    this._failures[k]++
+    if (this._failures[k] >= this._FAIL_THRESHOLD) {
+      // Auto-reset circuit breaker after recovery window
+      setTimeout(() => { this._failures[k] = 0 }, this._RECOVERY_MS)
+    }
+  }
+}
+
+// Only activate the pool for production web builds; local uses Vite proxy, native uses first URL
+const _pool = (!isLocal && !isNative && PROD_BACKENDS.length > 0)
+  ? new BackendPool(PROD_BACKENDS)
+  : null
+
+// Single URL used by non-pool paths (native, local)
+const API_URL = isLocal ? '/api' : PROD_BACKENDS[0]
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 
@@ -16,12 +77,28 @@ export const clearToken = () => localStorage.removeItem('splitclone_token')
 
 // ── Base fetch helpers ────────────────────────────────────────────────────────
 
-async function apiFetch(path, options = {}) {
+// _attempt counts how many backends we've already tried (for retry-on-failure)
+async function apiFetch(path, options = {}, _attempt = 0) {
   const token = getToken()
   const headers = { 'Content-Type': 'application/json', ...options.headers }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers })
+  const k   = _pool ? _pool.pick() : -1
+  const base = _pool ? _pool.url(k) : API_URL
+
+  let res
+  try {
+    res = await fetch(`${base}${path}`, { ...options, headers })
+    if (_pool) _pool.success(k)
+  } catch (err) {
+    // Network-level failure (server unreachable, timeout, etc.)
+    if (_pool) {
+      _pool.failure(k)
+      // Retry on the next healthy backend if we haven't exhausted the pool
+      if (_attempt < _pool.size() - 1) return apiFetch(path, options, _attempt + 1)
+    }
+    throw err
+  }
 
   if (res.status === 401) {
     clearToken()
@@ -36,12 +113,26 @@ async function apiFetch(path, options = {}) {
   return res.json()
 }
 
-// No-auth fetch for public endpoints (login / register)
-async function publicFetch(path, options = {}) {
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
+// No-auth fetch for public endpoints (login / register) — same LB logic
+async function publicFetch(path, options = {}, _attempt = 0) {
+  const k    = _pool ? _pool.pick() : -1
+  const base = _pool ? _pool.url(k) : API_URL
+
+  let res
+  try {
+    res = await fetch(`${base}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    })
+    if (_pool) _pool.success(k)
+  } catch (err) {
+    if (_pool) {
+      _pool.failure(k)
+      if (_attempt < _pool.size() - 1) return publicFetch(path, options, _attempt + 1)
+    }
+    throw err
+  }
+
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.detail || `Request failed: ${res.status}`)
@@ -219,10 +310,15 @@ export const fetchAdminNotifications = (userId = null) =>
 export const searchUsers = (q, excludeGroupId = null) =>
   apiFetch(`/users/search?q=${encodeURIComponent(q)}${excludeGroupId ? `&exclude_group_id=${excludeGroupId}` : ''}`).catch(() => []);
 
-export const fetchHealth = () =>
-  fetch(`${API_URL}/health`).then(r => r.ok ? r.json() : Promise.reject());
+export const fetchHealth = () => {
+  const k    = _pool ? _pool.pick() : -1
+  const base = _pool ? _pool.url(k) : API_URL
+  return fetch(`${base}/health`)
+    .then(r => { if (_pool && r.ok) _pool.success(k); return r.ok ? r.json() : Promise.reject() })
+    .catch(() => { if (_pool && k >= 0) _pool.failure(k) })
+}
 
-// WebSocket URL — routed through Vite proxy locally so port 8001 never needs direct access
+// WebSocket URL — round-robin picks the same backend the HTTP requests use
 export const getWsUrl = (userId) => {
   const token = getToken()
   const qs = token ? `?token=${token}` : ''
@@ -230,6 +326,8 @@ export const getWsUrl = (userId) => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
     return `${proto}://${window.location.host}/ws/${userId}${qs}`
   }
-  return `wss://splitup-qttj.onrender.com/ws/${userId}${qs}`
-};
-
+  // Pick from the pool so WebSocket lands on the same backend distribution
+  const k    = _pool ? _pool.pick() : -1
+  const base = _pool ? _pool.url(k) : PROD_BACKENDS[0]
+  return `${base.replace(/^https/, 'wss').replace(/^http/, 'ws')}/ws/${userId}${qs}`
+}
