@@ -148,6 +148,21 @@ export const registerUser = (name, email, password) =>
 export const loginUser = (email, password) =>
   publicFetch('/login/', { method: 'POST', body: JSON.stringify({ email, password }) });
 
+export const verifyEmail = (email, otp) =>
+  publicFetch('/verify-email/', { method: 'POST', body: JSON.stringify({ email, otp }) });
+
+export const resendVerification = (email) =>
+  publicFetch('/resend-verification/', { method: 'POST', body: JSON.stringify({ email }) });
+
+export const forgotPassword = (email) =>
+  publicFetch('/forgot-password/', { method: 'POST', body: JSON.stringify({ email }) });
+
+export const resetPassword = (email, otp, new_password) =>
+  publicFetch('/reset-password/', { method: 'POST', body: JSON.stringify({ email, otp, new_password }) });
+
+export const changePassword = (userId, current_password, new_password) =>
+  apiFetch(`/users/${userId}/change-password`, { method: 'PUT', body: JSON.stringify({ current_password, new_password }) });
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 export const fetchUsers = () =>

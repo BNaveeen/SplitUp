@@ -23,7 +23,7 @@ except ImportError:
     _redis_available = False
 
 from sqlalchemy import text
-from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, PendingInvite, Base, group_members
+from database import SessionLocal, engine, User, Group, Expense, ExpenseSplit, PendingInvite, Base, group_members, EmailVerification, PasswordReset
 from sqlalchemy.orm import selectinload, joinedload
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -32,6 +32,8 @@ JWT_SECRET    = os.environ.get("JWT_SECRET", "CHANGE_ME_IN_PRODUCTION")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", 480))
 REDIS_URL     = os.environ.get("REDIS_URL", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+EMAIL_FROM    = os.environ.get("EMAIL_FROM", "SplitUp <noreply@resend.dev>")
 
 # Allowed frontend origins — tighten for production
 ALLOWED_ORIGINS = [
@@ -74,6 +76,44 @@ def verify_password(plain: str, hashed: str) -> bool:
         return bcrypt.checkpw(plain.encode(), hashed.encode())
     except Exception:
         return False
+
+# ── OTP / Email helpers ───────────────────────────────────────────────────────
+
+def _generate_otp() -> str:
+    return str(secrets.randbelow(900000) + 100000)   # 6-digit, never < 100000
+
+def _send_email(to: str, subject: str, html: str) -> bool:
+    """Send via Resend API. Returns True on success, False if no key configured."""
+    if not RESEND_API_KEY:
+        return False
+    import urllib.request as _ur, json as _json
+    payload = _json.dumps({
+        "from": EMAIL_FROM,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }).encode()
+    req = _ur.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+    )
+    try:
+        _ur.urlopen(req, timeout=10)
+        return True
+    except Exception:
+        return False
+
+def _otp_email_html(otp: str, action: str) -> str:
+    return f"""
+    <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;background:#0f172a;color:#e2e8f0;border-radius:16px">
+      <h1 style="color:#818cf8;margin-bottom:8px">SplitUp</h1>
+      <p style="color:#94a3b8;margin-bottom:24px">{action}</p>
+      <div style="background:#1e293b;border-radius:12px;padding:24px;text-align:center">
+        <p style="font-size:48px;font-weight:700;letter-spacing:12px;color:#e2e8f0;margin:0">{otp}</p>
+      </div>
+      <p style="color:#64748b;font-size:13px;margin-top:20px">This code expires in 10 minutes. Do not share it.</p>
+    </div>"""
 
 # ── JWT helpers ───────────────────────────────────────────────────────────────
 
@@ -417,21 +457,91 @@ def lb_health(db: Session = Depends(get_db)):
 
 # ── Auth Routes ───────────────────────────────────────────────────────────────
 
-@app.post("/register/", response_model=TokenResponse)
+class VerifyEmailRequest(BaseModel):
+    email: str
+    otp: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.post("/register/")
 @limiter.limit("10/minute")
 def register_user(request: Request, user: UserRegister, db: Session = Depends(get_db)):
     normalized_email = user.email.strip().lower()
-    if db.query(User).filter(User.email.ilike(normalized_email)).first():
-        raise HTTPException(status_code=400, detail="Email already registered")
+    existing = db.query(User).filter(User.email.ilike(normalized_email)).first()
+    if existing:
+        if existing.is_verified:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        # Unverified account exists — resend OTP instead of blocking
+        db.query(EmailVerification).filter(EmailVerification.email == normalized_email).delete()
+    else:
+        is_first = db.query(User).filter(User.is_verified == True).count() == 0
+        hashed = hash_password(user.password)
+        existing = User(name=user.name.strip(), email=normalized_email, password=hashed,
+                        is_admin=is_first, is_verified=False)
+        db.add(existing)
+        db.flush()
 
-    is_first = db.query(User).count() == 0
-    hashed = hash_password(user.password)
-    new_user = User(name=user.name.strip(), email=normalized_email, password=hashed, is_admin=is_first)
-    db.add(new_user)
+    otp = _generate_otp()
+    ev = EmailVerification(
+        email=normalized_email, otp=otp,
+        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    )
+    db.add(ev)
     db.commit()
-    db.refresh(new_user)
-    token = create_access_token(new_user.id)
-    return TokenResponse(access_token=token, user=UserResponse.model_validate(new_user))
+
+    sent = _send_email(
+        normalized_email,
+        "Verify your SplitUp account",
+        _otp_email_html(otp, "Use this code to verify your email address and activate your account."),
+    )
+    return {"message": "verification_required", "email": normalized_email, "email_sent": sent}
+
+@app.post("/verify-email/", response_model=TokenResponse)
+@limiter.limit("20/minute")
+def verify_email(request: Request, body: VerifyEmailRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    ev = (db.query(EmailVerification)
+          .filter(EmailVerification.email == email, EmailVerification.used == False)
+          .order_by(EmailVerification.created_at.desc())
+          .first())
+    if not ev or ev.otp != body.otp.strip() or datetime.utcnow() > ev.expires_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+
+    ev.used = True
+    db_user = db.query(User).filter(User.email == email).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Account not found")
+    db_user.is_verified = True
+    db.commit()
+    db.refresh(db_user)
+    token = create_access_token(db_user.id)
+    return TokenResponse(access_token=token, user=UserResponse.model_validate(db_user))
+
+@app.post("/resend-verification/")
+@limiter.limit("5/minute")
+def resend_verification(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    db_user = db.query(User).filter(User.email == email).first()
+    if not db_user or db_user.is_verified:
+        return {"message": "ok"}  # silent — don't reveal whether email exists
+
+    db.query(EmailVerification).filter(EmailVerification.email == email).delete()
+    otp = _generate_otp()
+    db.add(EmailVerification(email=email, otp=otp, expires_at=datetime.utcnow() + timedelta(minutes=10)))
+    db.commit()
+    _send_email(email, "Your SplitUp verification code",
+                _otp_email_html(otp, "Use this code to verify your email address."))
+    return {"message": "ok"}
 
 @app.post("/login/", response_model=TokenResponse)
 @limiter.limit("20/minute")
@@ -440,8 +550,61 @@ def login_user(request: Request, user: UserLogin, db: Session = Depends(get_db))
     # Always run verify_password even on miss to prevent timing-based user enumeration
     if not db_user or not verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not db_user.is_verified:
+        raise HTTPException(status_code=403, detail="Email not verified. Check your inbox for the verification code.")
     token = create_access_token(db_user.id)
     return TokenResponse(access_token=token, user=UserResponse.model_validate(db_user))
+
+@app.post("/forgot-password/")
+@limiter.limit("5/minute")
+def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    db_user = db.query(User).filter(User.email == email).first()
+    if db_user and db_user.is_verified:
+        db.query(PasswordReset).filter(PasswordReset.email == email).delete()
+        otp = _generate_otp()
+        db.add(PasswordReset(email=email, otp=otp, expires_at=datetime.utcnow() + timedelta(minutes=10)))
+        db.commit()
+        _send_email(email, "Reset your SplitUp password",
+                    _otp_email_html(otp, "Use this code to reset your password."))
+    return {"message": "ok"}   # always 200 — don't reveal whether email exists
+
+@app.post("/reset-password/")
+@limiter.limit("10/minute")
+def reset_password(request: Request, body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    pr = (db.query(PasswordReset)
+          .filter(PasswordReset.email == email, PasswordReset.used == False)
+          .order_by(PasswordReset.created_at.desc())
+          .first())
+    if not pr or pr.otp != body.otp.strip() or datetime.utcnow() > pr.expires_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    pr.used = True
+    db_user = db.query(User).filter(User.email == email).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Account not found")
+    db_user.password = hash_password(body.new_password)
+    db.commit()
+    return {"message": "Password reset successfully"}
+
+@app.put("/users/{user_id}/change-password")
+@limiter.limit("10/minute")
+def change_password(request: Request, user_id: int, body: ChangePasswordRequest,
+                    current_user_id: int = Depends(get_current_user_id),
+                    db: Session = Depends(get_db)):
+    if current_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Cannot change another user's password")
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user or not verify_password(body.current_password, db_user.password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+    db_user.password = hash_password(body.new_password)
+    db.commit()
+    return {"message": "Password changed successfully"}
 
 # ── WebSocket Endpoint (JWT-authenticated) ────────────────────────────────────
 

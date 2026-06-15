@@ -5,7 +5,8 @@ import {
   Wallet, Users, LayoutGrid, LogOut, Loader2, CheckCircle, CheckCircle2,
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
-  Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX
+  Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
+  KeyRound, ShieldCheck
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -17,7 +18,8 @@ import {
   fetchInitiatedSettlements,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
-  renameGroup, fetchHealth, setToken, clearToken, getToken
+  renameGroup, fetchHealth, setToken, clearToken, getToken,
+  verifyEmail, resendVerification, forgotPassword, resetPassword, changePassword
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -187,23 +189,50 @@ export default function App() {
     return () => window.removeEventListener('auth_expired', onExpired)
   }, [])
 
+  const [authView, setAuthView] = useState('login') // 'login' | 'verify' | 'forgot' | 'reset'
+  const [pendingEmail, setPendingEmail] = useState('')
+
+  if (!user) return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      <AnimatePresence mode="wait">
+        {authView === 'login' && (
+          <LoginScreen key="login" onLogin={handleLogin}
+            onForgotPassword={() => setAuthView('forgot')}
+            onVerifyEmail={email => { setPendingEmail(email); setAuthView('verify') }} />
+        )}
+        {authView === 'verify' && (
+          <VerifyEmailView key="verify" email={pendingEmail}
+            onVerified={resp => { handleLogin(resp); setAuthView('login') }}
+            onBack={() => setAuthView('login')} />
+        )}
+        {authView === 'forgot' && (
+          <ForgotPasswordView key="forgot"
+            onOtpSent={email => { setPendingEmail(email); setAuthView('reset') }}
+            onBack={() => setAuthView('login')} />
+        )}
+        {authView === 'reset' && (
+          <ResetPasswordView key="reset" email={pendingEmail}
+            onReset={() => setAuthView('login')}
+            onBack={() => setAuthView('login')} />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-[#1a1a2e] text-slate-100 font-sans overflow-hidden relative">
       {/* gradient blobs — hidden on mobile to avoid GPU strain */}
       <div className="hidden sm:block fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-indigo-700/15 blur-[80px] pointer-events-none" />
       <div className="hidden sm:block fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-700/15 blur-[80px] pointer-events-none" />
       <AnimatePresence mode="wait">
-        {!user
-          ? <LoginScreen key="login" onLogin={handleLogin} />
-          : <Dashboard   key="dash"  user={user} onLogout={handleLogout} />
-        }
+        <Dashboard key="dash" user={user} onLogout={handleLogout} />
       </AnimatePresence>
     </div>
   )
 }
 
 // ── Login / Register ──────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onForgotPassword, onVerifyEmail }) {
   const [isLogin, setIsLogin] = useState(true)
   const [name, setName]       = useState('')
   const [email, setEmail]     = useState('')
@@ -219,7 +248,11 @@ function LoginScreen({ onLogin }) {
       const resp = isLogin
         ? await loginUser(normalizedEmail, password)
         : await registerUser(name.trim(), normalizedEmail, password)
-      onLogin(resp)
+      if (resp.message === 'verification_required') {
+        onVerifyEmail(resp.email)
+      } else {
+        onLogin(resp)
+      }
     } catch (err) {
       const msg = err.message || ''
       setError(
@@ -270,24 +303,189 @@ function LoginScreen({ onLogin }) {
             </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-slate-400">
+          {isLogin && (
+            <p className="mt-3 text-center">
+              <button onClick={() => onForgotPassword()} className="text-sm text-slate-400 hover:text-indigo-400 transition-colors">
+                Forgot password?
+              </button>
+            </p>
+          )}
+
+          <p className="mt-4 text-center text-sm text-slate-400">
             {isLogin ? "Don't have an account? " : "Already have an account? "}
             <button onClick={() => { setIsLogin(!isLogin); setError('') }} className="text-indigo-400 hover:text-indigo-300 font-medium">
               {isLogin ? 'Register' : 'Sign In'}
             </button>
           </p>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
 
-          <div className="mt-6 pt-4 border-t border-slate-700/50">
-            <p className="text-xs text-slate-500 text-center mb-2">Demo accounts</p>
-            <div className="flex flex-wrap gap-2 justify-center">
-              {['alice','bob','charlie','diana'].map(n => (
-                <button key={n} onClick={() => { setEmail(`${n}@example.com`); setPass('password'); setIsLogin(true) }}
-                  className="text-xs px-3 py-1 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 rounded-full text-slate-300 transition-colors">
-                  {n}@example.com
-                </button>
-              ))}
+// ── Email Verification ────────────────────────────────────────────────────────
+function VerifyEmailView({ email, onVerified, onBack }) {
+  const [otp, setOtp] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [resending, setResending] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const handleVerify = async (e) => {
+    e.preventDefault()
+    setLoading(true); setError('')
+    try {
+      const resp = await verifyEmail(email, otp.trim())
+      onVerified(resp)
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  const handleResend = async () => {
+    setResending(true); setError(''); setSuccess('')
+    try {
+      await resendVerification(email)
+      setSuccess('OTP resent — check your inbox')
+    } catch (err) { setError(err.message) }
+    finally { setResending(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+      className="min-h-screen flex items-center justify-center p-4 relative z-10">
+      <div className="w-full max-w-md bg-slate-800/60 backdrop-blur-2xl border border-slate-700/40 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+        <div className="p-8">
+          <div className="flex justify-center mb-6">
+            <div className="h-16 w-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+              <Mail className="h-8 w-8 text-white" />
             </div>
           </div>
+          <h2 className="text-2xl font-bold text-center text-slate-100 mb-1">Verify your email</h2>
+          <p className="text-slate-400 text-center text-sm mb-6">We sent a 6-digit code to<br /><span className="text-indigo-400 font-medium">{email}</span></p>
+          <form onSubmit={handleVerify} className="space-y-4">
+            <input type="text" inputMode="numeric" maxLength={6} required value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g,''))}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-600"
+              placeholder="······" />
+            {error && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-red-400 text-sm text-center bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</motion.p>}
+            {success && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-green-400 text-sm text-center bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">{success}</motion.p>}
+            <button type="submit" disabled={loading || otp.length < 6}
+              className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-all flex justify-center items-center h-12">
+              {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Verify Email'}
+            </button>
+          </form>
+          <div className="mt-4 flex flex-col items-center gap-2">
+            <button onClick={handleResend} disabled={resending} className="text-sm text-slate-400 hover:text-indigo-400 transition-colors">
+              {resending ? 'Sending…' : "Didn't get it? Resend code"}
+            </button>
+            <button onClick={onBack} className="text-sm text-slate-500 hover:text-slate-300 transition-colors">← Back to sign in</button>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
+// ── Forgot Password ───────────────────────────────────────────────────────────
+function ForgotPasswordView({ onOtpSent, onBack }) {
+  const [email, setEmail] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true); setError('')
+    try {
+      await forgotPassword(email.trim().toLowerCase())
+      onOtpSent(email.trim().toLowerCase())
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+      className="min-h-screen flex items-center justify-center p-4 relative z-10">
+      <div className="w-full max-w-md bg-slate-800/60 backdrop-blur-2xl border border-slate-700/40 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+        <div className="p-8">
+          <div className="flex justify-center mb-6">
+            <div className="h-16 w-16 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center shadow-lg shadow-amber-500/30">
+              <KeyRound className="h-8 w-8 text-white" />
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-center text-slate-100 mb-1">Forgot password?</h2>
+          <p className="text-slate-400 text-center text-sm mb-6">Enter your email and we'll send a reset code</p>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-slate-100 placeholder-slate-500"
+              placeholder="your@email.com" />
+            {error && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-red-400 text-sm text-center bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</motion.p>}
+            <button type="submit" disabled={loading}
+              className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-semibold py-3 rounded-xl transition-all flex justify-center items-center h-12">
+              {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Send Reset Code'}
+            </button>
+          </form>
+          <p className="mt-4 text-center">
+            <button onClick={onBack} className="text-sm text-slate-400 hover:text-indigo-400 transition-colors">← Back to sign in</button>
+          </p>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
+// ── Reset Password ────────────────────────────────────────────────────────────
+function ResetPasswordView({ email, onReset, onBack }) {
+  const [otp, setOtp] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (password !== confirm) { setError('Passwords do not match'); return }
+    if (password.length < 6) { setError('Password must be at least 6 characters'); return }
+    setLoading(true); setError('')
+    try {
+      await resetPassword(email, otp.trim(), password)
+      onReset()
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+      className="min-h-screen flex items-center justify-center p-4 relative z-10">
+      <div className="w-full max-w-md bg-slate-800/60 backdrop-blur-2xl border border-slate-700/40 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+        <div className="p-8">
+          <div className="flex justify-center mb-6">
+            <div className="h-16 w-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center shadow-lg shadow-green-500/30">
+              <ShieldCheck className="h-8 w-8 text-white" />
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-center text-slate-100 mb-1">Reset password</h2>
+          <p className="text-slate-400 text-center text-sm mb-6">Enter the code sent to <span className="text-indigo-400 font-medium">{email}</span></p>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <input type="text" inputMode="numeric" maxLength={6} required value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g,''))}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-600"
+              placeholder="······" />
+            <input type="password" required value={password} onChange={e => setPassword(e.target.value)}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-500"
+              placeholder="New password" />
+            <input type="password" required value={confirm} onChange={e => setConfirm(e.target.value)}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-500"
+              placeholder="Confirm new password" />
+            {error && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-red-400 text-sm text-center bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</motion.p>}
+            <button type="submit" disabled={loading || otp.length < 6}
+              className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-all flex justify-center items-center h-12">
+              {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Set New Password'}
+            </button>
+          </form>
+          <p className="mt-4 text-center">
+            <button onClick={onBack} className="text-sm text-slate-400 hover:text-indigo-400 transition-colors">← Back to sign in</button>
+          </p>
         </div>
       </div>
     </motion.div>
@@ -3062,6 +3260,49 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
   )
 }
 
+// ── Change Password Form ──────────────────────────────────────────────────────
+function ChangePasswordForm({ userId }) {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (next !== confirm) { setError('Passwords do not match'); return }
+    if (next.length < 6) { setError('New password must be at least 6 characters'); return }
+    setLoading(true); setError(''); setSuccess('')
+    try {
+      await changePassword(userId, current, next)
+      setSuccess('Password changed successfully')
+      setCurrent(''); setNext(''); setConfirm('')
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <input type="password" value={current} onChange={e => setCurrent(e.target.value)} required
+        className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+        placeholder="Current password" />
+      <input type="password" value={next} onChange={e => setNext(e.target.value)} required
+        className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+        placeholder="New password" />
+      <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required
+        className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+        placeholder="Confirm new password" />
+      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {success && <p className="text-green-400 text-sm">{success}</p>}
+      <button type="submit" disabled={loading}
+        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 rounded-xl transition-all flex justify-center items-center">
+        {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Update Password'}
+      </button>
+    </form>
+  )
+}
+
 // ── Profile Modal ─────────────────────────────────────────────────────────────
 function ProfileModal({ user, onClose, onSave }) {
   const [name, setName] = useState(user.name)
@@ -3116,6 +3357,12 @@ function ProfileModal({ user, onClose, onSave }) {
             {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Save Changes'}
           </button>
         </form>
+
+        {/* Change Password */}
+        <div className="px-6 pb-6 mt-6 pt-6 border-t border-slate-700/50">
+          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Change Password</h3>
+          <ChangePasswordForm userId={user.id} />
+        </div>
       </motion.div>
     </motion.div>
   )
