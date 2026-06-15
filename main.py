@@ -440,7 +440,7 @@ class BalanceEntry(BaseModel):
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "version": "2.0"}
 
 @app.get("/lb-health")
 def lb_health(db: Session = Depends(get_db)):
