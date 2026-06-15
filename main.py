@@ -32,8 +32,12 @@ JWT_SECRET    = os.environ.get("JWT_SECRET", "CHANGE_ME_IN_PRODUCTION")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", 480))
 REDIS_URL     = os.environ.get("REDIS_URL", "")
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-EMAIL_FROM    = os.environ.get("EMAIL_FROM", "SplitUp <noreply@resend.dev>")
+# SMTP email config — works with Gmail, Zoho, custom domain, any SMTP server
+SMTP_HOST     = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER     = os.environ.get("SMTP_USER", "")   # your@gmail.com or noreply@yourdomain.com
+SMTP_PASS     = os.environ.get("SMTP_PASS", "")   # Gmail App Password or SMTP password
+EMAIL_FROM    = os.environ.get("EMAIL_FROM", "")  # display name + address, e.g. "SplitUp <noreply@yourdomain.com>"
 
 # Allowed frontend origins — tighten for production
 ALLOWED_ORIGINS = [
@@ -83,23 +87,25 @@ def _generate_otp() -> str:
     return str(secrets.randbelow(900000) + 100000)   # 6-digit, never < 100000
 
 def _send_email(to: str, subject: str, html: str) -> bool:
-    """Send via Resend API. Returns True on success, False if no key configured."""
-    if not RESEND_API_KEY:
+    """Send via SMTP (works with Gmail, Zoho, custom domain — any SMTP server).
+    Returns True on success, False if SMTP credentials are not configured."""
+    if not SMTP_USER or not SMTP_PASS:
         return False
-    import urllib.request as _ur, json as _json
-    payload = _json.dumps({
-        "from": EMAIL_FROM,
-        "to": [to],
-        "subject": subject,
-        "html": html,
-    }).encode()
-    req = _ur.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-    )
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    sender = EMAIL_FROM or SMTP_USER
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = sender
+    msg["To"]      = to
+    msg.attach(MIMEText(html, "html"))
     try:
-        _ur.urlopen(req, timeout=10)
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_USER, to, msg.as_string())
         return True
     except Exception:
         return False
