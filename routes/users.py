@@ -1,11 +1,12 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from database import User, Expense, ExpenseSplit, Notification, Settlement
+from database import User, Expense, ExpenseSplit, Notification, Settlement, group_members
 from routes.deps import get_db, get_current_user_id
 from services.helpers import _format_expense, _EXPENSE_LOAD_OPTIONS
-from schemas import UserResponse, UserUpdate, NotificationResponse, ExpenseResponse, SettlementResponse
+from schemas import UserResponse, UserUpdate, NotificationResponse, ExpenseResponse, SettlementResponse, GroupDetailResponse
 
 router = APIRouter()
 
@@ -67,7 +68,7 @@ def update_user(
     return user
 
 
-@router.get("/users/{user_id}/groups/")
+@router.get("/users/{user_id}/groups/", response_model=List[GroupDetailResponse])
 def get_user_groups(
     user_id: int,
     current_user_id: int = Depends(get_current_user_id),
@@ -78,7 +79,24 @@ def get_user_groups(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user.groups
+    # Build response with only *active* members so the member count on the
+    # group card reflects who's actually participating (not deactivated users).
+    result = []
+    for group in user.groups:
+        active_ids = {
+            row.user_id for row in db.execute(
+                select(group_members.c.user_id).where(
+                    (group_members.c.group_id == group.id) &
+                    (group_members.c.is_active == True)
+                )
+            ).fetchall()
+        }
+        result.append({
+            "id": group.id,
+            "name": group.name,
+            "members": [m for m in group.members if m.id in active_ids],
+        })
+    return result
 
 
 @router.get("/users/{user_id}/all_balances")
