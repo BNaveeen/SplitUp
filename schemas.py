@@ -131,6 +131,7 @@ class ExpenseCreate(BaseModel):
     date: Optional[str] = None
     splits: List[SplitCreate]
     receipt_image: Optional[str] = None
+    category: Optional[str] = None
 
 
 class SplitResponse(BaseModel):
@@ -173,6 +174,7 @@ class ExpenseResponse(BaseModel):
     created_at: Optional[str] = None
     settlement_statuses: List[SettlementStatusEntry] = []
     receipt_image: Optional[str] = None
+    category: Optional[str] = None
 
     class Config:
         from_attributes = True

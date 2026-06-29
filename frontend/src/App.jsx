@@ -6,7 +6,7 @@ import {
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
-  KeyRound, ShieldCheck
+  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -23,63 +23,22 @@ import {
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
+import {
+  MONTH_SHORT, EXPENSE_CATEGORIES, categoryIcons, categoryMeta,
+  formatDate, formatTimestamp, chatDateLabel, todayISO, guessCategory, buildCSVRows,
+} from './utils'
 
-const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-
-function formatDate(isoString) {
-  if (!isoString) return { month: '—', day: '—', year: '—' }
-  const d = new Date(isoString)
-  return { month: MONTH_SHORT[d.getMonth()], day: String(d.getDate()), year: String(d.getFullYear()) }
-}
-
-function formatTimestamp(isoString) {
-  if (!isoString) return ''
-  const d = new Date(isoString)
-  const now = new Date()
-  const diffMs = now - d
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMs / 3600000)
-  const diffDays = Math.floor(diffMs / 86400000)
-  if (diffMins < 1) return 'just now'
-  if (diffMins < 60) return `${diffMins}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-function chatDateLabel(isoString) {
-  if (!isoString) return ''
-  const d = new Date(isoString)
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const yesterday = new Date(today - 86400000)
-  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  if (msgDay.getTime() === today.getTime()) return 'Today'
-  if (msgDay.getTime() === yesterday.getTime()) return 'Yesterday'
-  return d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })
-}
-
-function todayISO() {
-  return new Date().toISOString().split('T')[0]
-}
-
-const categoryIcons = {
-  food: '🍽️', drink: '🍺', grocery: '🛒', transport: '🚗',
-  entertainment: '🎮', bill: '💡', hotel: '🏨', flight: '✈️',
-  default: '💳'
-}
-
-function guessCategory(description) {
-  const d = description.toLowerCase()
-  if (/smoke|pepper|mutton|biryani|restaurant|dinner|lunch|breakfast|food|curry/.test(d)) return 'food'
-  if (/bar|pub|beer|drink|alcohol|wine/.test(d)) return 'drink'
-  if (/lidl|tesco|sainsbury|aldi|grocery|supermarket/.test(d)) return 'grocery'
-  if (/uber|taxi|bus|train|tube|transport|car|scooter/.test(d)) return 'transport'
-  if (/netflix|game|bowling|cinema|movie|game/.test(d)) return 'entertainment'
-  if (/electric|gas|water|broadband|wifi|bill|rent|key/.test(d)) return 'bill'
-  if (/hotel|airbnb|hostel/.test(d)) return 'hotel'
-  if (/flight|airport|plane/.test(d)) return 'flight'
-  return 'default'
+// ── CSV Export ────────────────────────────────────────────────────────────────
+function exportGroupToCSV(expenses, groupName, members = []) {
+  const rows = buildCSVRows(expenses, members)
+  const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url
+  a.download = `${groupName.replace(/\s+/g, '_')}_expenses_${new Date().toISOString().split('T')[0]}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
@@ -1457,7 +1416,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
         {/* Section tabs */}
         <div className="flex gap-1 mt-4 bg-slate-800/50 rounded-xl p-1">
-          {[['expenses', 'Expenses', Receipt], ['balances', 'Balances', TrendingDown]].map(([id, label, Icon]) => (
+          {[['expenses', 'Expenses', Receipt], ['balances', 'Balances', TrendingDown], ['insights', 'Insights', BarChart2]].map(([id, label, Icon]) => (
             <button key={id} onClick={() => setSection(id)}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-all ${activeSection === id ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
               <Icon className="h-4 w-4" />{label}
@@ -1503,8 +1462,10 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               myRole={myRole}
             />
           </>
-        ) : (
+        ) : activeSection === 'balances' ? (
           <BalanceList balances={balances} currentUser={currentUser} members={members} />
+        ) : (
+          <InsightsTab expenses={expenses} members={members} group={group} />
         )}
       </div>
 
@@ -2223,7 +2184,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
               const { month, day, year } = formatDate(e.date)
               const mySplit = e.splits.find(s => s.user_id === currentUser.id)
               const iPaid  = e.payer_id === currentUser.id
-              const cat    = guessCategory(e.description)
+              const cat    = e.category || guessCategory(e.description)
               const icon   = categoryIcons[cat]
 
               let balLabel = '', balColor = ''
@@ -2451,6 +2412,126 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
       </div>
     )}
     </>
+  )
+}
+
+// ── Insights Tab ─────────────────────────────────────────────────────────────
+function InsightsTab({ expenses, members, group }) {
+  const active = expenses.filter(e => e.status === 'active' || e.status === 'pending_deletion' || e.status === 'approved_for_deletion')
+
+  // Category breakdown
+  const catTotals = {}
+  active.forEach(e => {
+    const cat = e.category || guessCategory(e.description)
+    catTotals[cat] = (catTotals[cat] || 0) + parseFloat(e.amount)
+  })
+  const catEntries = Object.entries(catTotals).sort((a, b) => b[1] - a[1])
+  const maxCat = catEntries[0]?.[1] || 1
+  const totalSpent = active.reduce((s, e) => s + parseFloat(e.amount), 0)
+
+  // Monthly spending (last 6 months)
+  const now = new Date()
+  const monthlyData = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
+    const label = d.toLocaleDateString([], { month: 'short' })
+    const total = active.filter(e => {
+      if (!e.date) return false
+      const ed = new Date(e.date)
+      return ed.getMonth() === d.getMonth() && ed.getFullYear() === d.getFullYear()
+    }).reduce((s, e) => s + parseFloat(e.amount), 0)
+    return { label, total }
+  })
+  const maxMonth = Math.max(...monthlyData.map(m => m.total), 1)
+
+  // Per-person spending
+  const memberSpend = {}
+  members.forEach(m => { memberSpend[m.id] = { name: m.name, paid: 0, share: 0 } })
+  active.forEach(e => {
+    if (memberSpend[e.payer_id]) memberSpend[e.payer_id].paid += parseFloat(e.amount)
+    e.splits.forEach(s => { if (memberSpend[s.user_id]) memberSpend[s.user_id].share += parseFloat(s.amount) })
+  })
+
+  if (active.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <BarChart2 className="h-10 w-10 text-slate-600 mb-3" />
+        <p className="text-slate-400 font-medium">No data yet</p>
+        <p className="text-slate-500 text-sm mt-1">Add some expenses to see spending insights</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-5 pb-20">
+      {/* Total + CSV export */}
+      <div className="flex items-center justify-between mt-2">
+        <div>
+          <p className="text-xs text-slate-500 uppercase tracking-wider">Total Group Spend</p>
+          <p className="text-2xl font-bold text-white">£{totalSpent.toFixed(2)}</p>
+          <p className="text-xs text-slate-500">{active.length} expense{active.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button onClick={() => exportGroupToCSV(expenses, group.name, members)}
+          className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-sm text-slate-300 transition-colors">
+          <Download className="h-4 w-4" /> Export CSV
+        </button>
+      </div>
+
+      {/* Monthly spending chart */}
+      <div className="bg-slate-800/50 border border-slate-700/40 rounded-2xl p-4">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Monthly Spending</p>
+        <div className="flex items-end gap-1.5 h-24">
+          {monthlyData.map(({ label, total }) => (
+            <div key={label} className="flex-1 flex flex-col items-center gap-1">
+              <div className="w-full rounded-t-md bg-indigo-500/30 border border-indigo-500/40 transition-all"
+                style={{ height: `${Math.max((total / maxMonth) * 80, total > 0 ? 6 : 0)}px` }} />
+              <span className="text-[10px] text-slate-500">{label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Category breakdown */}
+      <div className="bg-slate-800/50 border border-slate-700/40 rounded-2xl p-4">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">By Category</p>
+        <div className="space-y-2.5">
+          {catEntries.map(([cat, total]) => {
+            const meta = categoryMeta[cat] || { icon: '📦', label: cat, color: 'bg-slate-500/20 border-slate-500/40 text-slate-300' }
+            const pct = (total / totalSpent) * 100
+            return (
+              <div key={cat}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-slate-300 flex items-center gap-1.5">
+                    <span>{meta.icon}</span>{meta.label}
+                  </span>
+                  <span className="text-sm font-semibold text-slate-200">£{total.toFixed(2)}
+                    <span className="text-xs text-slate-500 font-normal ml-1">({pct.toFixed(0)}%)</span>
+                  </span>
+                </div>
+                <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${(total / maxCat) * 100}%` }} />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Per-person spending */}
+      <div className="bg-slate-800/50 border border-slate-700/40 rounded-2xl p-4">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Who Spent What</p>
+        <div className="space-y-2">
+          {Object.values(memberSpend).filter(m => m.paid > 0 || m.share > 0).sort((a, b) => b.paid - a.paid).map((m, i) => (
+            <div key={i} className="flex items-center justify-between py-1.5 border-b border-slate-700/30 last:border-0">
+              <span className="text-sm text-slate-300">{m.name}</span>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-emerald-400">paid £{m.paid.toFixed(2)}</p>
+                <p className="text-xs text-slate-500">owes £{m.share.toFixed(2)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -2817,6 +2898,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     }
     return vals
   })
+  const [category, setCategory]       = useState(initialExpense?.category || null)
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
   const [success, setSuccess]         = useState(false)
@@ -3012,6 +3094,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         date,
         splits: finalSplits,
         receipt_image: receiptImage || null,
+        category: category || guessCategory(description.trim()) || null,
       }
       if (initialExpense) {
         await updateExpense(initialExpense.id, payload)
@@ -3096,9 +3179,28 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
               {/* Description */}
               <div>
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">What was it for?</label>
-                <input autoFocus type="text" required value={description} onChange={e => setDescription(e.target.value)}
+                <input autoFocus type="text" required value={description}
+                  onChange={e => {
+                    setDescription(e.target.value)
+                    if (!category) setCategory(guessCategory(e.target.value))
+                  }}
                   placeholder="e.g. Dinner, Netflix, Uber..."
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-500 text-base" />
+              </div>
+
+              {/* Category picker */}
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                  <Tag className="h-3 w-3" /> Category
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {EXPENSE_CATEGORIES.map(c => (
+                    <button key={c.id} type="button" onClick={() => setCategory(c.id)}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${category === c.id ? c.color : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                      {c.icon} {c.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Amount + Date */}

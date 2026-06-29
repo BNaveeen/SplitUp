@@ -122,4 +122,5 @@ def _format_expense(e: Expense, db: Session = None) -> dict:
         ),
         "settlement_statuses": settlement_statuses,
         "receipt_image": getattr(e, "receipt_image", None),
+        "category": getattr(e, "category", None),
     }

@@ -47,6 +47,7 @@ def split_expense(
         payer_id=expense.payer_id, created_by_id=expense.created_by_id,
         group_id=expense.group_id, date=expense_date,
         receipt_image=expense.receipt_image,
+        category=expense.category,
     )
     db.add(new_expense)
     db.commit()
@@ -107,6 +108,7 @@ def update_expense(
     expense.description = expense_update.description
     expense.amount = expense_update.amount
     expense.payer_id = expense_update.payer_id
+    expense.category = expense_update.category
     if expense_update.date:
         try:
             expense.date = datetime.fromisoformat(expense_update.date)

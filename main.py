@@ -111,7 +111,14 @@ async def startup_event():
     # Column migration (idempotent — safe to run on every startup)
     mig_db = SessionLocal()
     try:
-        mig_db.execute(text("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_image TEXT"))
+        for col_sql in [
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_image TEXT",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category TEXT",
+        ]:
+            try:
+                mig_db.execute(text(col_sql))
+            except Exception:
+                mig_db.rollback()
         mig_db.commit()
     except Exception:
         mig_db.rollback()
