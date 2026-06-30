@@ -3028,18 +3028,21 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     if (!file) return
     setScanning(true); setScanError('')
     try {
-      // Run OCR and compress image in parallel
-      const [result, compressed] = await Promise.all([
-        runReceiptOCR(file),
-        compressImageToBase64(file),
-      ])
-      if (result.amount) setAmount(result.amount)
-      if (result.description) setDescription(prev => prev || result.description)
-      if (result.date) setDate(result.date)
+      // Show preview immediately — don't wait for slow OCR
+      const compressed = await compressImageToBase64(file)
       setReceiptImage(compressed)
-      if (!result.amount) setScanError('Could not detect a total — please enter the amount manually.')
+      // Run OCR in background after preview is already visible
+      try {
+        const result = await runReceiptOCR(file)
+        if (result.amount) setAmount(result.amount)
+        if (result.description) setDescription(prev => prev || result.description)
+        if (result.date) setDate(result.date)
+        if (!result.amount) setScanError('Could not detect a total — please enter the amount manually.')
+      } catch {
+        setScanError('OCR failed — but your receipt photo is attached.')
+      }
     } catch (err) {
-      setScanError('Scan failed. Try a clearer photo.')
+      setScanError('Could not load image. Try a different photo.')
     } finally {
       setScanning(false)
       e.target.value = ''
@@ -3107,31 +3110,33 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         return { user_id: uid, amount: a }
       })
     } else if (splitMode === 'exact') {
+      if (selectedUsers.length === 0) return setError('Select at least one person to split with')
       let total = 0
-      Object.entries(splitValues).forEach(([uid, val]) => {
-        const amt = parseFloat(val)
+      selectedUsers.forEach(uid => {
+        const amt = parseFloat(splitValues[uid])
         if (!isNaN(amt) && amt > 0) {
           total += amt
-          finalSplits.push({ user_id: parseInt(uid), amount: amt })
+          finalSplits.push({ user_id: uid, amount: amt })
         }
       })
-      if (Math.abs(total - numAmount) > 0.01) return setError(`Exact amounts sum to £${total.toFixed(2)}, but total is £${numAmount.toFixed(2)}`)
-      if (finalSplits.length === 0) return setError('Enter at least one valid amount')
+      if (Math.abs(total - numAmount) > 0.01) return setError(`Amounts sum to £${total.toFixed(2)}, but expense total is £${numAmount.toFixed(2)}`)
+      if (finalSplits.length === 0) return setError('Enter at least one amount')
     } else if (splitMode === 'percentage') {
+      if (selectedUsers.length === 0) return setError('Select at least one person to split with')
       let totalPct = 0
-      Object.entries(splitValues).forEach(([uid, val]) => {
-        const pct = parseFloat(val)
+      selectedUsers.forEach(uid => {
+        const pct = parseFloat(splitValues[uid])
         if (!isNaN(pct) && pct > 0) {
           totalPct += pct
-          finalSplits.push({ user_id: parseInt(uid), amount: parseFloat(((pct / 100) * numAmount).toFixed(2)) })
+          finalSplits.push({ user_id: uid, amount: parseFloat(((pct / 100) * numAmount).toFixed(2)) })
         }
       })
-      if (Math.abs(totalPct - 100) > 0.01) return setError(`Percentages sum to ${totalPct.toFixed(2)}%, but must be exactly 100%`)
-      if (finalSplits.length === 0) return setError('Enter at least one valid percentage')
-      // fix rounding issue for the last item in percentage mode
+      if (Math.abs(totalPct - 100) > 0.01) return setError(`Percentages sum to ${totalPct.toFixed(1)}% — must total 100%`)
+      if (finalSplits.length === 0) return setError('Enter at least one percentage')
+      // fix rounding on last item
       const allocated = finalSplits.reduce((acc, s) => acc + s.amount, 0)
       if (Math.abs(allocated - numAmount) > 0.005) {
-        finalSplits[finalSplits.length - 1].amount += parseFloat((numAmount - allocated).toFixed(2))
+        finalSplits[finalSplits.length - 1].amount = parseFloat((finalSplits[finalSplits.length - 1].amount + numAmount - allocated).toFixed(2))
       }
     } else if (splitMode === 'adjusted') {
       let fixedTotal = 0
@@ -3365,36 +3370,36 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                   ))}
                 </div>
 
-                {(splitMode === 'equal' || splitMode === 'adjusted') && (
-                  <>
-                    <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
-                      {splitMode === 'equal' ? 'Split equally with' : 'People involved'}
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      {displayUsers.map(u => {
-                        const sel = selectedUsers.includes(u.id)
-                        return (
-                          <button key={u.id} type="button" onClick={() => toggleUser(u.id)}
-                            className={`flex items-center gap-2 pl-1 pr-3 py-1.5 rounded-full border text-sm font-medium transition-all ${sel ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}>
-                            <div className={`h-6 w-6 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-[10px] font-bold text-white`}>
-                              {u.name.charAt(0)}
-                            </div>
-                            {u.id === currentUser.id ? 'You' : u.name}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {amount && splitMode === 'equal' && selectedUsers.length > 0 && (
-                      <p className="text-xs text-slate-500 mt-2">
-                        £{(parseFloat(amount) / selectedUsers.length).toFixed(2)} per person across {selectedUsers.length} {selectedUsers.length === 1 ? 'person' : 'people'}
-                      </p>
-                    )}
-                  </>
-                )}
+                {/* People selector — shown for all split modes */}
+                <>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+                    {splitMode === 'equal' ? 'Split equally with' : 'People involved'}
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {displayUsers.map(u => {
+                      const sel = selectedUsers.includes(u.id)
+                      return (
+                        <button key={u.id} type="button" onClick={() => toggleUser(u.id)}
+                          className={`flex items-center gap-2 pl-1 pr-3 py-1.5 rounded-full border text-sm font-medium transition-all ${sel ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'}`}>
+                          <div className={`h-6 w-6 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-[10px] font-bold text-white`}>
+                            {u.name.charAt(0)}
+                          </div>
+                          {u.id === currentUser.id ? 'You' : u.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {splitMode === 'equal' && amount && selectedUsers.length > 0 && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      £{(parseFloat(amount) / selectedUsers.length).toFixed(2)} per person across {selectedUsers.length} {selectedUsers.length === 1 ? 'person' : 'people'}
+                    </p>
+                  )}
+                </>
 
-                {splitMode !== 'equal' && (
-                  <div className="space-y-2 mt-4 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                    {(splitMode === 'adjusted' && selectedUsers.length > 0 ? users.filter(u => selectedUsers.includes(u.id)) : users).map(u => (
+                {/* Amount inputs — exact, percentage, adjusted */}
+                {splitMode !== 'equal' && selectedUsers.length > 0 && (
+                  <div className="space-y-2 mt-1 max-h-52 overflow-y-auto pr-2 custom-scrollbar">
+                    {displayUsers.filter(u => selectedUsers.includes(u.id)).map(u => (
                       <div key={u.id} className="flex items-center justify-between gap-3 bg-slate-800/40 p-2.5 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
                         <div className="flex items-center gap-2">
                           <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
@@ -3404,9 +3409,9 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                         </div>
                         <div className="relative w-24">
                           {splitMode !== 'percentage' && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium text-sm">£</span>}
-                          <input type="number" step="0.01" min={splitMode==='adjusted'?undefined:"0"}
+                          <input type="number" step="0.01" min={splitMode === 'adjusted' ? undefined : '0'}
                             value={splitValues[u.id] || ''}
-                            onChange={(e) => handleSplitValueChange(u.id, e.target.value)}
+                            onChange={e => handleSplitValueChange(u.id, e.target.value)}
                             className={`w-full bg-slate-900/80 border border-slate-600 rounded-lg py-1.5 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 text-slate-100 placeholder-slate-600 text-sm font-medium transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${splitMode === 'percentage' ? 'text-right pr-6 pl-3' : 'text-left pl-7 pr-3'}`}
                             placeholder={splitMode === 'adjusted' ? 'Auto' : '0.00'}
                           />
@@ -3414,24 +3419,28 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                         </div>
                       </div>
                     ))}
-                    <div className="pt-3 text-xs font-medium flex justify-between px-1">
-                      <span className="text-slate-500 uppercase tracking-wider">{splitMode === 'adjusted' ? 'Fixed Pool:' : 'Total Allocated:'}</span>
-                      {splitMode === 'adjusted' ? (
-                        <span className="text-indigo-400 font-semibold">
-                          £{Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)} / £{(parseFloat(amount)||0).toFixed(2)}
-                        </span>
-                      ) : (
-                        <span className={
-                          (splitMode === 'exact' && Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0) !== parseFloat(amount||0)) ||
-                          (splitMode === 'percentage' && Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0) !== 100)
-                            ? 'text-amber-400 font-semibold' : 'text-emerald-400 font-semibold'
-                        }>
-                          {splitMode === 'exact' 
-                            ? `£${Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)} / £{(parseFloat(amount)||0).toFixed(2)}`
-                            : `${Object.values(splitValues).reduce((a, b) => a + (parseFloat(b)||0), 0).toFixed(2)}% / 100%`}
-                        </span>
-                      )}
-                    </div>
+                    {/* Running total */}
+                    {(() => {
+                      const entered = selectedUsers.reduce((s, uid) => s + (parseFloat(splitValues[uid]) || 0), 0)
+                      const target = splitMode === 'percentage' ? 100 : parseFloat(amount) || 0
+                      const remaining = target - entered
+                      const ok = Math.abs(remaining) < 0.015
+                      return (
+                        <div className="pt-2 text-xs font-medium flex justify-between px-1">
+                          <span className="text-slate-500 uppercase tracking-wider">
+                            {splitMode === 'adjusted' ? 'Fixed pool:' : splitMode === 'percentage' ? 'Total %:' : 'Total:'}
+                          </span>
+                          <span className={ok ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>
+                            {splitMode === 'percentage'
+                              ? `${entered.toFixed(1)}% / 100%`
+                              : `£${entered.toFixed(2)} / £${(parseFloat(amount) || 0).toFixed(2)}`}
+                            {!ok && splitMode !== 'adjusted' && (
+                              <span className="ml-1 text-slate-500">({remaining > 0 ? '+' : ''}£{remaining.toFixed(2)} left)</span>
+                            )}
+                          </span>
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
               </div>
