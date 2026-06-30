@@ -165,10 +165,10 @@ async def startup_event():
     mig_db = SessionLocal()
     try:
         for col_sql in [
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_image TEXT",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category TEXT",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurrence TEXT",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS next_due DATETIME",
+            "ALTER TABLE expenses ADD COLUMN receipt_image TEXT",
+            "ALTER TABLE expenses ADD COLUMN category TEXT",
+            "ALTER TABLE expenses ADD COLUMN recurrence TEXT",
+            "ALTER TABLE expenses ADD COLUMN next_due DATETIME",
         ]:
             try:
                 mig_db.execute(text(col_sql))
