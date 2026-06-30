@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -42,12 +42,28 @@ def split_expense(
         except ValueError:
             pass
 
+    # Compute next_due for recurring expenses
+    next_due = None
+    if expense.recurrence in ('weekly', 'monthly', 'yearly'):
+        if expense.recurrence == 'weekly':
+            next_due = expense_date + timedelta(weeks=1)
+        elif expense.recurrence == 'monthly':
+            m = expense_date.month + 1
+            y = expense_date.year + (m - 1) // 12
+            m = (m - 1) % 12 + 1
+            d = min(expense_date.day, [31,28+int((y%4==0 and(y%100!=0 or y%400==0))),31,30,31,30,31,31,30,31,30,31][m-1])
+            next_due = expense_date.replace(year=y, month=m, day=d)
+        else:
+            next_due = expense_date.replace(year=expense_date.year + 1)
+
     new_expense = Expense(
         description=expense.description, amount=expense.amount,
         payer_id=expense.payer_id, created_by_id=expense.created_by_id,
         group_id=expense.group_id, date=expense_date,
         receipt_image=expense.receipt_image,
         category=expense.category,
+        recurrence=expense.recurrence or None,
+        next_due=next_due,
     )
     db.add(new_expense)
     db.commit()

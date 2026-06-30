@@ -123,4 +123,6 @@ def _format_expense(e: Expense, db: Session = None) -> dict:
         "settlement_statuses": settlement_statuses,
         "receipt_image": getattr(e, "receipt_image", None),
         "category": getattr(e, "category", None),
+        "recurrence": getattr(e, "recurrence", None),
+        "next_due": (getattr(e, "next_due", None).isoformat() if getattr(e, "next_due", None) else None),
     }

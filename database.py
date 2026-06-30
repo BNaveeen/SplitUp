@@ -86,7 +86,9 @@ class Expense(Base):
     created_by_id = Column(Integer, ForeignKey("users.id"), index=True)
     status = Column(String, default="active", index=True) # active, pending_deletion
     receipt_image = Column(Text, nullable=True)
-    category = Column(String(50), nullable=True)  # food, transport, accommodation, entertainment, groceries, utilities, subscriptions, healthcare, shopping, other
+    category = Column(String(50), nullable=True)
+    recurrence = Column(String(10), nullable=True)   # null | 'weekly' | 'monthly' | 'yearly'
+    next_due = Column(DateTime, nullable=True)        # when the next copy should be created
 
     group = relationship("Group", back_populates="expenses")
     payer = relationship("User", foreign_keys=[payer_id], back_populates="expenses_paid")

@@ -9,7 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import SessionLocal, Expense, ExpenseSplit, ExpenseMessage, Settlement
+from database import SessionLocal, Expense, ExpenseSplit, ExpenseMessage, Settlement, Notification
 from routes.deps import limiter, get_db
 from routes import auth, users, groups, expenses, settlements, admin, invites, websocket_routes
 from services.realtime import manager, set_event_loop
@@ -72,12 +72,28 @@ def lb_health(db: Session = Depends(get_db)):
     }
 
 
+def _next_due(current_due: datetime, recurrence: str) -> datetime:
+    if recurrence == 'weekly':
+        return current_due + timedelta(weeks=1)
+    if recurrence == 'monthly':
+        month = current_due.month + 1
+        year = current_due.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        day = min(current_due.day, [31,28+int((year%4==0 and(year%100!=0 or year%400==0))),31,30,31,30,31,31,30,31,30,31][month-1])
+        return current_due.replace(year=year, month=month, day=day)
+    if recurrence == 'yearly':
+        return current_due.replace(year=current_due.year + 1)
+    return current_due + timedelta(days=1)
+
+
 async def _deletion_scheduler():
     while True:
         await asyncio.sleep(60)
+        now = datetime.utcnow()
         db = SessionLocal()
         try:
-            cutoff = datetime.utcnow() - timedelta(minutes=10)
+            # Permanently delete approved expenses past the grace period
+            cutoff = now - timedelta(minutes=10)
             expired = db.query(Expense).filter(
                 Expense.status == "approved_for_deletion",
                 Expense.deletion_approved_at.isnot(None),
@@ -92,6 +108,43 @@ async def _deletion_scheduler():
             if expired:
                 db.commit()
                 for gid in group_ids:
+                    _push_group_event(db, gid)
+
+            # Spawn due recurring expenses
+            due = db.query(Expense).filter(
+                Expense.recurrence.isnot(None),
+                Expense.next_due.isnot(None),
+                Expense.next_due <= now,
+                Expense.status == "active",
+            ).all()
+            recurring_group_ids = set()
+            for tmpl in due:
+                new_exp = Expense(
+                    description=tmpl.description,
+                    amount=tmpl.amount,
+                    payer_id=tmpl.payer_id,
+                    created_by_id=tmpl.created_by_id,
+                    group_id=tmpl.group_id,
+                    date=tmpl.next_due,
+                    category=tmpl.category,
+                    recurrence=None,   # spawned copy is a plain expense
+                )
+                db.add(new_exp)
+                db.flush()
+                for split in tmpl.splits:
+                    db.add(ExpenseSplit(expense_id=new_exp.id, user_id=split.user_id, amount=split.amount))
+                _add_system_message(db, new_exp.id, tmpl.created_by_id, f"created automatically (recurring {tmpl.recurrence})")
+                # Notify all split members
+                split_uids = {s.user_id for s in tmpl.splits} | {tmpl.payer_id}
+                for uid in split_uids:
+                    if uid != tmpl.created_by_id:
+                        db.add(Notification(user_id=uid, message=f"Recurring expense added: {tmpl.description}", expense_id=new_exp.id, group_id=tmpl.group_id, is_read=0))
+                tmpl.next_due = _next_due(tmpl.next_due, tmpl.recurrence)
+                if tmpl.group_id:
+                    recurring_group_ids.add(tmpl.group_id)
+            if due:
+                db.commit()
+                for gid in recurring_group_ids:
                     _push_group_event(db, gid)
         except Exception:
             pass
@@ -114,6 +167,8 @@ async def startup_event():
         for col_sql in [
             "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_image TEXT",
             "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category TEXT",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS recurrence TEXT",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS next_due DATETIME",
         ]:
             try:
                 mig_db.execute(text(col_sql))

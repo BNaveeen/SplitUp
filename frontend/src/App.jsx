@@ -888,6 +888,8 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const [memberships, setMemberships] = useState([])  // [{user_id, user_name, role, is_active}]
   const [loading, setLoading]   = useState(true)
   const [activeSection, setSection] = useState('expenses') // expenses | balances
+  const [expSearch, setExpSearch] = useState('')
+  const [expCatFilter, setExpCatFilter] = useState(null) // null = all
   const [showAddExp, setAddExp]  = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [memberSearch, setMemberSearch] = useState('')
@@ -1436,8 +1438,34 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
           </div>
         ) : activeSection === 'expenses' ? (
           <>
+            {/* Search + filter bar */}
+            <div className="mt-3 mb-2 space-y-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
+                <input value={expSearch} onChange={e => setExpSearch(e.target.value)}
+                  placeholder="Search expenses…"
+                  className="w-full bg-slate-800/60 border border-slate-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                {expSearch && (
+                  <button onClick={() => setExpSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                {[null, ...EXPENSE_CATEGORIES.map(c => c.id)].map(cid => {
+                  const meta = cid ? categoryMeta[cid] : null
+                  const active = expCatFilter === cid
+                  return (
+                    <button key={cid ?? 'all'} onClick={() => setExpCatFilter(cid)}
+                      className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${active ? (meta ? meta.color : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300') : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                      {meta ? `${meta.icon} ${meta.label}` : 'All'}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             {expenses.some(e => e.status === 'deleted') && (
-              <div className="flex justify-end mt-2 mb-1">
+              <div className="flex justify-end mb-1">
                 <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer hover:text-slate-200 transition-colors">
                   <input type="checkbox" checked={showValidOnly} onChange={e => setShowValidOnly(e.target.checked)} className="accent-indigo-500" />
                   Hide deleted expenses
@@ -1445,7 +1473,12 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
               </div>
             )}
             <ExpenseList
-              expenses={expenses}
+              expenses={expenses.filter(e => {
+                const term = expSearch.toLowerCase()
+                const matchSearch = !term || e.description.toLowerCase().includes(term)
+                const matchCat = !expCatFilter || (e.category || guessCategory(e.description)) === expCatFilter
+                return matchSearch && matchCat
+              })}
               chatRefreshKey={chatRefreshKey}
               currentUser={currentUser}
               allUsers={allUsers}
@@ -2274,7 +2307,14 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                     </div>
                     {/* Description */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-100 truncate">{e.description}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-sm font-semibold text-slate-100 truncate">{e.description}</p>
+                        {e.recurrence && (
+                          <span className="flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                            <Zap className="h-2.5 w-2.5" />{e.recurrence}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-slate-400 mt-0.5">
                         Added by {e.created_by_name} • {iPaid ? 'You paid' : `${e.payer_name} paid`} £{e.amount.toFixed(2)}
                       </p>
@@ -2536,7 +2576,55 @@ function InsightsTab({ expenses, members, group }) {
 }
 
 // ── Balance List ──────────────────────────────────────────────────────────────
+function simplifyDebts(balances) {
+  const net = {}
+  const names = {}
+  balances.forEach(b => {
+    net[b.from_user_id] = (net[b.from_user_id] || 0) - b.amount
+    net[b.to_user_id]   = (net[b.to_user_id]   || 0) + b.amount
+    names[b.from_user_id] = b.from_user_name
+    names[b.to_user_id]   = b.to_user_name
+  })
+  const creditors = Object.entries(net).filter(([,v]) => v >  0.005).map(([id,v]) => [+id, v]).sort((a,b) => b[1]-a[1])
+  const debtors   = Object.entries(net).filter(([,v]) => v < -0.005).map(([id,v]) => [+id,-v]).sort((a,b) => b[1]-a[1])
+  const result = []
+  let i = 0, j = 0
+  while (i < creditors.length && j < debtors.length) {
+    const settle = Math.min(creditors[i][1], debtors[j][1])
+    result.push({ from_user_id: debtors[j][0], from_user_name: names[debtors[j][0]], to_user_id: creditors[i][0], to_user_name: names[creditors[i][0]], amount: Math.round(settle * 100) / 100 })
+    creditors[i][1] -= settle
+    debtors[j][1]   -= settle
+    if (creditors[i][1] < 0.005) i++
+    if (debtors[j][1]   < 0.005) j++
+  }
+  return result
+}
+
+function BalanceRow({ b, currentUser, index }) {
+  const isMe = b.from_user_id === currentUser.id || b.to_user_id === currentUser.id
+  return (
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}
+      className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-all ${isMe ? 'bg-slate-800 border-slate-600' : 'bg-slate-800/40 border-slate-700/30'}`}>
+      <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(b.from_user_id)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+        {b.from_user_name.charAt(0)}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-slate-200">
+          <span className="font-semibold">{b.from_user_id === currentUser.id ? 'You' : b.from_user_name}</span>
+          <span className="text-slate-400"> owe </span>
+          <span className="font-semibold">{b.to_user_id === currentUser.id ? 'you' : b.to_user_name}</span>
+        </p>
+      </div>
+      <span className={`text-sm font-bold shrink-0 ${b.from_user_id === currentUser.id ? 'text-rose-400' : b.to_user_id === currentUser.id ? 'text-emerald-400' : 'text-slate-300'}`}>
+        £{b.amount.toFixed(2)}
+      </span>
+    </motion.div>
+  )
+}
+
 function BalanceList({ balances, currentUser, members }) {
+  const [simplified, setSimplified] = useState(false)
+
   if (balances.length === 0) {
     return (
       <div className="text-center py-12 text-slate-500 mt-2">
@@ -2547,29 +2635,27 @@ function BalanceList({ balances, currentUser, members }) {
     )
   }
 
+  const displayed = simplified ? simplifyDebts(balances) : balances
+
   return (
-    <div className="mt-2 space-y-2">
-      {balances.map((b, i) => {
-        const isMe = b.from_user_id === currentUser.id || b.to_user_id === currentUser.id
-        return (
-          <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-            className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-all ${isMe ? 'bg-slate-800 border-slate-600' : 'bg-slate-800/40 border-slate-700/30'}`}>
-            <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(b.from_user_id)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-              {b.from_user_name.charAt(0)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-slate-200">
-                <span className="font-semibold">{b.from_user_id === currentUser.id ? 'You' : b.from_user_name}</span>
-                <span className="text-slate-400"> owe </span>
-                <span className="font-semibold">{b.to_user_id === currentUser.id ? 'You' : b.to_user_name}</span>
-              </p>
-            </div>
-            <span className={`text-sm font-bold shrink-0 ${b.from_user_id === currentUser.id ? 'text-rose-400' : b.to_user_id === currentUser.id ? 'text-emerald-400' : 'text-slate-300'}`}>
-              £{b.amount.toFixed(2)}
-            </span>
-          </motion.div>
-        )
-      })}
+    <div className="mt-2">
+      {/* Simplify toggle */}
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs text-slate-500">{displayed.length} transaction{displayed.length !== 1 ? 's' : ''} {simplified ? '(simplified)' : ''}</p>
+        <button onClick={() => setSimplified(s => !s)}
+          className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${simplified ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'}`}>
+          <Zap className="h-3 w-3" />
+          {simplified ? 'Simplified' : 'Simplify Debts'}
+        </button>
+      </div>
+      {simplified && balances.length > displayed.length && (
+        <p className="text-xs text-indigo-400/70 mb-2 text-center">
+          Reduced from {balances.length} to {displayed.length} transaction{displayed.length !== 1 ? 's' : ''} — saving {balances.length - displayed.length} payment{balances.length - displayed.length !== 1 ? 's' : ''}
+        </p>
+      )}
+      <div className="space-y-2">
+        {displayed.map((b, i) => <BalanceRow key={i} b={b} currentUser={currentUser} index={i} />)}
+      </div>
     </div>
   )
 }
@@ -2899,6 +2985,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     return vals
   })
   const [category, setCategory]       = useState(initialExpense?.category || null)
+  const [recurrence, setRecurrence]   = useState(initialExpense?.recurrence || null)
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
   const [success, setSuccess]         = useState(false)
@@ -3095,6 +3182,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         splits: finalSplits,
         receipt_image: receiptImage || null,
         category: category || guessCategory(description.trim()) || null,
+        recurrence: recurrence || null,
       }
       if (initialExpense) {
         await updateExpense(initialExpense.id, payload)
@@ -3202,6 +3290,23 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                   ))}
                 </div>
               </div>
+
+              {/* Recurrence */}
+              {!initialExpense && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                    <Zap className="h-3 w-3" /> Repeat
+                  </label>
+                  <div className="flex gap-2">
+                    {[null, 'weekly', 'monthly', 'yearly'].map(r => (
+                      <button key={r ?? 'none'} type="button" onClick={() => setRecurrence(r)}
+                        className={`flex-1 py-1.5 rounded-lg border text-xs font-medium transition-all ${recurrence === r ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                        {r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Once'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Amount + Date */}
               <div className="grid grid-cols-2 gap-3">

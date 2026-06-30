@@ -132,6 +132,7 @@ class ExpenseCreate(BaseModel):
     splits: List[SplitCreate]
     receipt_image: Optional[str] = None
     category: Optional[str] = None
+    recurrence: Optional[str] = None   # null | 'weekly' | 'monthly' | 'yearly'
 
 
 class SplitResponse(BaseModel):
@@ -175,6 +176,8 @@ class ExpenseResponse(BaseModel):
     settlement_statuses: List[SettlementStatusEntry] = []
     receipt_image: Optional[str] = None
     category: Optional[str] = None
+    recurrence: Optional[str] = None
+    next_due: Optional[str] = None
 
     class Config:
         from_attributes = True
