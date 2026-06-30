@@ -3098,6 +3098,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     setError('')
     const numAmount = parseFloat(amount)
     if (isNaN(numAmount) || numAmount <= 0) { submittingRef.current = false; return setError('Please enter a valid amount') }
+    if (!groupId) { submittingRef.current = false; return setError('Please select a group') }
 
     let finalSplits = []
 
@@ -3345,16 +3346,24 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
               </div>
 
               {/* Group */}
-              {groups.length > 0 && (
-                <div>
-                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Group (optional)</label>
-                  <select value={groupId} onChange={e => setGroupId(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 text-slate-100 appearance-none">
-                    <option value="">No Group</option>
+              <div>
+                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Group</label>
+                {defaultGroupId ? (
+                  /* Locked — already inside a group */
+                  <div className="w-full bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-300 flex items-center gap-2">
+                    <Users className="h-4 w-4 text-indigo-400 shrink-0" />
+                    <span className="font-medium">{groups.find(g => g.id === parseInt(groupId))?.name || 'Group'}</span>
+                    <span className="ml-auto text-[10px] text-slate-500 uppercase tracking-wider">locked</span>
+                  </div>
+                ) : (
+                  /* Required picker */
+                  <select required value={groupId} onChange={e => setGroupId(e.target.value)}
+                    className={`w-full bg-slate-800 border rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 text-slate-100 appearance-none transition-colors ${!groupId ? 'border-slate-600' : 'border-slate-700'}`}>
+                    <option value="" disabled>Select a group…</option>
                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Split Options */}
               <div>
