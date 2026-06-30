@@ -16,7 +16,7 @@ import {
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
   fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements,
   fetchInitiatedSettlements,
-  fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications,
+  fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications, adminWipeTransactions,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
   renameGroup, fetchHealth, setToken, clearToken, getToken,
   verifyEmail, resendVerification, forgotPassword, resetPassword, changePassword
@@ -1453,16 +1453,20 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                 )}
               </div>
               <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-                {[null, ...EXPENSE_CATEGORIES.map(c => c.id)].map(cid => {
-                  const meta = cid ? categoryMeta[cid] : null
-                  const active = expCatFilter === cid
-                  return (
-                    <button key={cid ?? 'all'} onClick={() => setExpCatFilter(cid)}
-                      className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${active ? (meta ? meta.color : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300') : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
-                      {meta ? `${meta.icon} ${meta.label}` : 'All'}
-                    </button>
-                  )
-                })}
+                {(() => {
+                  const usedCats = new Set(expenses.map(e => e.category || guessCategory(e.description)).filter(Boolean))
+                  const visibleCats = [null, ...EXPENSE_CATEGORIES.map(c => c.id).filter(id => usedCats.has(id))]
+                  return visibleCats.map(cid => {
+                    const meta = cid ? categoryMeta[cid] : null
+                    const active = expCatFilter === cid
+                    return (
+                      <button key={cid ?? 'all'} onClick={() => setExpCatFilter(cid)}
+                        className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${active ? (meta ? meta.color : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300') : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                        {meta ? `${meta.icon} ${meta.label}` : 'All'}
+                      </button>
+                    )
+                  })
+                })()}
               </div>
             </div>
             {expenses.some(e => e.status === 'deleted') && (
@@ -1549,6 +1553,10 @@ function AdminDashboard({ currentUser, onBack }) {
   const [newIsAdmin, setNewIsAdmin]         = useState(false)
   const [createLoading, setCreateLoading]   = useState(false)
   const [createError, setCreateError]       = useState('')
+  const [showWipeDialog, setShowWipeDialog] = useState(false)
+  const [wipeInput, setWipeInput]           = useState('')
+  const [wipeLoading, setWipeLoading]       = useState(false)
+  const [wipeError, setWipeError]           = useState('')
 
   const TABS = [
     { id: 'overview',      label: 'Overview',      icon: LayoutGrid },
@@ -1604,6 +1612,18 @@ function AdminDashboard({ currentUser, onBack }) {
       setNewName(''); setNewEmail(''); setNewPassword(''); setNewIsAdmin(false); setShowCreateUser(false)
     } catch (e) { setCreateError(e.message) }
     finally { setCreateLoading(false) }
+  }
+
+  const handleWipeTransactions = async () => {
+    setWipeLoading(true); setWipeError('')
+    try {
+      await adminWipeTransactions(wipeInput)
+      setShowWipeDialog(false); setWipeInput('')
+      alert('All transactions wiped successfully. Users and groups are intact.')
+      loadTab('overview')
+    } catch (e) {
+      setWipeError(e.message || 'Failed to wipe transactions.')
+    } finally { setWipeLoading(false) }
   }
 
   const filteredUsers = users.filter(u =>
@@ -1707,6 +1727,68 @@ function AdminDashboard({ currentUser, onBack }) {
                   ))}
                 </div>
               </div>
+
+              {/* Danger Zone */}
+              <div className="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="h-8 w-8 rounded-lg bg-rose-500/20 flex items-center justify-center">
+                    <Trash2 className="h-4 w-4 text-rose-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-rose-400">Danger Zone</p>
+                    <p className="text-xs text-slate-500">Irreversible actions — proceed with extreme caution</p>
+                  </div>
+                </div>
+                <div className="flex items-start justify-between gap-4 p-4 bg-slate-900/50 rounded-xl border border-rose-500/20">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200">Wipe All Transactions</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Delete all expenses, splits, settlements, and notifications. Users and groups remain intact.</p>
+                  </div>
+                  <button onClick={() => { setShowWipeDialog(true); setWipeInput(''); setWipeError('') }}
+                    className="shrink-0 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-bold transition-colors">
+                    Wipe DB
+                  </button>
+                </div>
+              </div>
+
+              {/* Wipe confirmation dialog */}
+              <AnimatePresence>
+                {showWipeDialog && (
+                  <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowWipeDialog(false)} />
+                    <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                      className="relative w-full max-w-sm bg-slate-900 border border-rose-500/40 rounded-3xl shadow-2xl p-6 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl bg-rose-500/20 flex items-center justify-center">
+                          <Trash2 className="h-5 w-5 text-rose-400" />
+                        </div>
+                        <div>
+                          <h2 className="text-base font-bold text-white">Confirm Wipe</h2>
+                          <p className="text-xs text-slate-400">This cannot be undone</p>
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-300">This will permanently delete all <span className="text-rose-400 font-semibold">expenses, splits, settlements, messages, and notifications</span>. Users and groups will NOT be affected.</p>
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1.5">Type <span className="font-mono text-rose-400 font-bold">DELETE ALL TRANSACTIONS</span> to confirm:</p>
+                        <input autoFocus value={wipeInput} onChange={e => setWipeInput(e.target.value)}
+                          placeholder="DELETE ALL TRANSACTIONS"
+                          className="w-full bg-slate-800 border border-rose-500/30 focus:border-rose-500 rounded-xl px-4 py-2.5 text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-rose-500" />
+                        {wipeError && <p className="text-xs text-rose-400 mt-1.5">{wipeError}</p>}
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={() => setShowWipeDialog(false)} className="flex-1 py-2.5 rounded-xl border border-slate-700 text-sm text-slate-400 hover:text-white hover:border-slate-500 transition-colors">Cancel</button>
+                        <button
+                          onClick={handleWipeTransactions}
+                          disabled={wipeInput !== 'DELETE ALL TRANSACTIONS' || wipeLoading}
+                          className="flex-1 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold transition-colors flex items-center justify-center gap-2">
+                          {wipeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          Wipe Now
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>
             </div>
 
           /* ── Users ── */
@@ -2986,6 +3068,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
     return vals
   })
   const [category, setCategory]       = useState(initialExpense?.category || null)
+  const [categoryLocked, setCategoryLocked] = useState(!!initialExpense?.category)
   const [recurrence, setRecurrence]   = useState(initialExpense?.recurrence || null)
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
@@ -3277,7 +3360,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                 <input autoFocus type="text" required value={description}
                   onChange={e => {
                     setDescription(e.target.value)
-                    if (!category) setCategory(guessCategory(e.target.value))
+                    if (!categoryLocked) setCategory(guessCategory(e.target.value))
                   }}
                   placeholder="e.g. Dinner, Netflix, Uber..."
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-500 text-base" />
@@ -3290,7 +3373,7 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
                 </label>
                 <div className="flex flex-wrap gap-1.5">
                   {EXPENSE_CATEGORIES.map(c => (
-                    <button key={c.id} type="button" onClick={() => setCategory(c.id)}
+                    <button key={c.id} type="button" onClick={() => { setCategory(c.id); setCategoryLocked(true) }}
                       className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${category === c.id ? c.color : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
                       {c.icon} {c.label}
                     </button>

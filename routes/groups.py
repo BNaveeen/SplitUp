@@ -178,9 +178,6 @@ def get_group_balances(
     if cached is not None:
         return cached
 
-    net = {m.id: 0.0 for m in group.members}
-    member_names = {m.id: m.name for m in group.members}
-
     paid_query = db.query(
         Expense.payer_id.label("user_id"),
         func.sum(Expense.amount).label("total_paid")
@@ -195,11 +192,22 @@ def get_group_balances(
         Expense.group_id == group_id, Expense.status != "deleted"
     ).group_by(ExpenseSplit.user_id).all()
 
+    # Include all users involved (members + any ex-members who paid/split)
+    member_names = {m.id: m.name for m in group.members}
+    involved_ids = {m.id for m in group.members}
+    involved_ids.update(uid for uid, _ in paid_query)
+    involved_ids.update(uid for uid, _ in owed_query)
+    extra_ids = involved_ids - set(member_names)
+    if extra_ids:
+        extra_users = db.query(User).filter(User.id.in_(extra_ids)).all()
+        member_names.update({u.id: u.name for u in extra_users})
+    net = {uid: 0.0 for uid in involved_ids}
+
     for user_id, total_paid in paid_query:
-        if user_id in net and total_paid:
+        if total_paid:
             net[user_id] += float(total_paid)
     for user_id, total_owed in owed_query:
-        if user_id in net and total_owed:
+        if total_owed:
             net[user_id] -= float(total_owed)
 
     approved = db.query(Settlement).filter(
