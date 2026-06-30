@@ -731,6 +731,7 @@ function Dashboard({ user, onLogout }) {
       {selectedGroup ? (
         <ErrorBoundary>
           <GroupDetailView
+            key={selectedGroup.id}
             group={selectedGroup}
             currentUser={user}
             allUsers={users}
