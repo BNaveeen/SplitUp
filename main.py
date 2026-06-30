@@ -9,7 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import SessionLocal, Expense, ExpenseSplit, ExpenseMessage, Settlement, Notification
+from database import SessionLocal, Expense, ExpenseSplit, ExpenseMessage, Settlement, Notification, SQLALCHEMY_DATABASE_URL
 from routes.deps import limiter, get_db
 from routes import auth, users, groups, expenses, settlements, admin, invites, websocket_routes
 from services.realtime import manager, set_event_loop
@@ -161,24 +161,24 @@ async def startup_event():
         except Exception:
             pass
     asyncio.create_task(_deletion_scheduler())
-    # Column migration (idempotent — safe to run on every startup)
-    mig_db = SessionLocal()
-    try:
-        for col_sql in [
-            "ALTER TABLE expenses ADD COLUMN receipt_image TEXT",
-            "ALTER TABLE expenses ADD COLUMN category TEXT",
-            "ALTER TABLE expenses ADD COLUMN recurrence TEXT",
-            "ALTER TABLE expenses ADD COLUMN next_due DATETIME",
-        ]:
-            try:
-                mig_db.execute(text(col_sql))
-            except Exception:
-                mig_db.rollback()
-        mig_db.commit()
-    except Exception:
-        mig_db.rollback()
-    finally:
-        mig_db.close()
+    # Column migration — each statement in its own transaction so one failure
+    # doesn't roll back the others. TIMESTAMP works on both SQLite and PostgreSQL.
+    is_pg = SQLALCHEMY_DATABASE_URL.startswith("postgresql") or SQLALCHEMY_DATABASE_URL.startswith("postgres")
+    ts_type = "TIMESTAMP" if is_pg else "DATETIME"
+    for col_sql in [
+        "ALTER TABLE expenses ADD COLUMN receipt_image TEXT",
+        "ALTER TABLE expenses ADD COLUMN category TEXT",
+        "ALTER TABLE expenses ADD COLUMN recurrence TEXT",
+        f"ALTER TABLE expenses ADD COLUMN next_due {ts_type}",
+    ]:
+        mig_db = SessionLocal()
+        try:
+            mig_db.execute(text(col_sql))
+            mig_db.commit()
+        except Exception:
+            mig_db.rollback()
+        finally:
+            mig_db.close()
     # Clean up fake "Payment" expenses created by old settlement flow
     db = SessionLocal()
     try:
