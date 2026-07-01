@@ -765,7 +765,7 @@ function Dashboard({ user, onLogout }) {
                     <ActivityTab currentUser={user} groups={groups} />
                   )}
                   {activeTab === 'people' && (
-                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} onSettle={loadData} />
+                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} onSettle={loadData} />
                   )}
                 </motion.div>
               </AnimatePresence>
@@ -2771,7 +2771,7 @@ function ActivityTab({ currentUser, groups }) {
 }
 
 // ── People Tab ────────────────────────────────────────────────────────────────
-function PeopleTab({ users, currentUser, groups = [], globalBalances = [], onSettle }) {
+function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initiatedSettlements = [], onSettle }) {
   const [selectedBalance, setSelectedBalance] = useState(null)
   const visibleUsers = currentUser?.is_admin ? users : users.filter(u => {
     if (u.id === currentUser.id) return true
@@ -2782,7 +2782,7 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], onSet
     try {
       for (const gb of balanceObj.group_balances) {
         if (gb.amount < 0) {
-          await quickSettle({
+          await createSettlement({
             payer_id: currentUser.id,
             payee_id: balanceObj.other_user_id,
             amount: Math.abs(gb.amount),
@@ -2793,7 +2793,7 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], onSet
       setSelectedBalance(null)
       if (onSettle) onSettle()
     } catch (e) {
-      alert(e.message || "Failed to settle.")
+      alert(e.message || "Failed to send settlement request.")
     }
   }
 
@@ -2805,6 +2805,7 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], onSet
         const balObj = globalBalances.find(b => b.other_user_id === u.id)
         const netBalance = balObj ? balObj.net_balance : 0
         const isCleared = netBalance === 0
+        const hasPending = initiatedSettlements.some(s => s.payee_id === u.id && s.status === 'pending')
 
         return (
           <motion.div key={u.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
@@ -2817,15 +2818,16 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], onSet
               <p className="text-xs text-slate-500">{u.email}</p>
             </div>
             {u.id !== currentUser.id && (
-              <button 
-                onClick={() => !isCleared && setSelectedBalance(balObj)}
+              <button
+                onClick={() => !isCleared && !hasPending && setSelectedBalance(balObj)}
                 className={`px-3 py-1.5 rounded-full text-xs font-bold tracking-wide transition-colors ${
-                  isCleared ? 'bg-slate-700/50 text-slate-400 cursor-default' : 
-                  netBalance > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 
+                  isCleared ? 'bg-slate-700/50 text-slate-400 cursor-default' :
+                  hasPending ? 'bg-amber-500/10 text-amber-400 cursor-default border border-amber-500/20' :
+                  netBalance > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' :
                   'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
                 }`}
               >
-                {isCleared ? 'Cleared' : netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` : `You owe £${Math.abs(netBalance).toFixed(2)}`}
+                {isCleared ? 'Cleared' : hasPending ? 'Pending approval…' : netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` : `You owe £${Math.abs(netBalance).toFixed(2)}`}
               </button>
             )}
           </motion.div>
