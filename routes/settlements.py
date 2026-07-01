@@ -142,6 +142,57 @@ def approve_settlement(
     return {"message": "Settlement approved."}
 
 
+@router.get("/settlements/{settlement_id}/breakdown")
+def get_settlement_breakdown(
+    settlement_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    settlement = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    if not settlement:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    if current_user_id not in (settlement.payer_id, settlement.payee_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if settlement.expense_id:
+        exp = db.query(Expense).filter(Expense.id == settlement.expense_id).first()
+        if not exp:
+            return []
+        return [{
+            "expense_id": exp.id,
+            "description": exp.description,
+            "date": exp.date.isoformat(),
+            "total_amount": float(exp.amount),
+            "your_share": float(settlement.amount),
+        }]
+
+    if not settlement.group_id:
+        return []
+
+    expenses = db.query(Expense).filter(
+        Expense.group_id == settlement.group_id,
+        Expense.payer_id == settlement.payee_id,
+        Expense.status == "active",
+    ).order_by(Expense.date.desc()).all()
+
+    result = []
+    for exp in expenses:
+        split = db.query(ExpenseSplit).filter(
+            ExpenseSplit.expense_id == exp.id,
+            ExpenseSplit.user_id == settlement.payer_id,
+        ).first()
+        if not split:
+            continue
+        result.append({
+            "expense_id": exp.id,
+            "description": exp.description,
+            "date": exp.date.isoformat(),
+            "total_amount": float(exp.amount),
+            "your_share": float(split.amount),
+        })
+    return result
+
+
 @router.post("/settlements/{settlement_id}/reject")
 def reject_settlement(
     settlement_id: int,

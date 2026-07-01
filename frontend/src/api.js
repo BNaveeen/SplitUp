@@ -277,6 +277,12 @@ export const rejectSettlement = (id) =>
 export const fetchPendingSettlements = (userId) =>
   apiFetch(`/users/${userId}/pending_settlements`).catch(() => []);
 
+export const fetchAllSettlements = (userId) =>
+  apiFetch(`/users/${userId}/all_settlements`).catch(() => []);
+
+export const fetchSettlementBreakdown = (settlementId) =>
+  apiFetch(`/settlements/${settlementId}/breakdown`).catch(() => []);
+
 export const fetchInitiatedSettlements = (userId) =>
   apiFetch(`/users/${userId}/initiated_settlements`).catch(() => []);
 

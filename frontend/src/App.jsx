@@ -15,7 +15,7 @@ import {
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
   fetchAllUserBalances, createSettlement, quickSettle, approveSettlement, rejectSettlement, fetchPendingSettlements,
-  fetchInitiatedSettlements, fetchAllSettlements,
+  fetchInitiatedSettlements, fetchAllSettlements, fetchSettlementBreakdown,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications, adminWipeTransactions,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
   renameGroup, fetchHealth, setToken, clearToken, getToken,
@@ -2828,6 +2828,104 @@ function ActivityTab({ currentUser, groups }) {
 }
 
 // ── People Tab ────────────────────────────────────────────────────────────────
+// ── Settlement history section for a person ───────────────────────────────────
+function SettleHistory({ txns, currentUser, otherName }) {
+  const [showAll, setShowAll] = useState(false)
+  const PREVIEW = 3
+  const visible = showAll ? txns : txns.slice(0, PREVIEW)
+
+  return (
+    <div className="border-t border-slate-700/40 px-4 py-2 space-y-1.5">
+      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Settle-up history</p>
+      {visible.map(s => {
+        const iSent = s.payer_id === currentUser.id
+        const statusColor = s.status === 'approved' ? 'text-emerald-400' : s.status === 'pending' ? 'text-amber-400' : 'text-rose-400'
+        const statusLabel = s.status === 'approved' ? 'Paid' : s.status === 'pending' ? 'Pending' : 'Rejected'
+        const now = Date.now()
+        const diffMin = Math.floor((now - new Date(s.created_at).getTime()) / 60000)
+        const rel = diffMin < 1 ? 'just now' : diffMin < 60 ? `${diffMin}m ago` : diffMin < 1440 ? `${Math.floor(diffMin/60)}h ago` : new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'2-digit' })
+        return (
+          <div key={s.id} className="flex items-center gap-2">
+            <span className={`shrink-0 text-[10px] font-bold w-12 ${statusColor}`}>{statusLabel}</span>
+            <span className="text-slate-400 text-xs flex-1 truncate">
+              {iSent ? `You → ${otherName}` : `${otherName} → You`}
+            </span>
+            <span className="text-xs font-semibold text-slate-200 shrink-0">£{s.amount.toFixed(2)}</span>
+            <span className="text-slate-600 text-[10px] shrink-0 w-14 text-right">{rel}</span>
+          </div>
+        )
+      })}
+      {txns.length > PREVIEW && (
+        <button onClick={() => setShowAll(v => !v)} className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors mt-0.5">
+          {showAll ? 'Show less' : `Show ${txns.length - PREVIEW} more…`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── Settlement approval card with lazy-loaded expense breakdown ───────────────
+function SettlementApprovalCard({ s, onApprove, onReject }) {
+  const [breakdown, setBreakdown] = useState(null)
+  const [expanded, setExpanded] = useState(false)
+
+  const load = () => {
+    if (breakdown) { setExpanded(v => !v); return }
+    fetchSettlementBreakdown(s.id).then(d => { setBreakdown(d); setExpanded(true) })
+  }
+
+  return (
+    <div className="mx-3 mb-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold text-emerald-400">{s.payer_name} wants to pay you £{s.amount.toFixed(2)}</p>
+          <button onClick={load} className="text-[10px] text-slate-400 hover:text-indigo-400 transition-colors flex items-center gap-1 mt-0.5">
+            {new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}
+            {s.group_id && ' · '}
+            <span className="underline underline-offset-2">{expanded ? 'Hide breakdown' : 'View expenses →'}</span>
+          </button>
+        </div>
+        <button onClick={() => onApprove(s.id, s.payer_name, s.amount)}
+          className="shrink-0 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
+          <Check className="h-3 w-3" /> Accept
+        </button>
+        <button onClick={() => onReject(s.id, s.payer_name, s.amount)}
+          className="shrink-0 px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
+          <X className="h-3 w-3" /> Reject
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {expanded && breakdown && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-t border-emerald-500/20 bg-slate-900/40">
+            {breakdown.length === 0 ? (
+              <p className="text-[10px] text-slate-500 px-3 py-2">No active expenses found for this settlement.</p>
+            ) : (
+              <div className="px-3 py-2 space-y-1.5">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Expenses covered</p>
+                {breakdown.map(b => (
+                  <div key={b.expense_id} className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-slate-200 truncate">{b.description}</p>
+                      <p className="text-[10px] text-slate-500">{new Date(b.date).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })} · Total £{b.total_amount.toFixed(2)}</p>
+                    </div>
+                    <span className="shrink-0 text-xs font-bold text-emerald-400">Your share £{b.your_share.toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="border-t border-slate-700/50 pt-1.5 flex justify-between">
+                  <span className="text-[10px] font-bold text-slate-400">Total settling</span>
+                  <span className="text-xs font-bold text-emerald-400">£{breakdown.reduce((s,b) => s+b.your_share,0).toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initiatedSettlements = [], pendingSettlements = [], allSettlements = [], onSettle }) {
   const [selectedBalance, setSelectedBalance] = useState(null)
   const [actionMsg, setActionMsg] = useState(null)
@@ -2854,7 +2952,6 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
     const theirPending = pendingSettlements.filter(s => s.payer_id === u.id)
     const txns = allSettlements
       .filter(s => (s.payer_id === u.id || s.payee_id === u.id) && s.expense_id == null)
-      .slice(0, 5)
     const sharedGroups = groups.filter(g => g.members?.some(m => m.id === u.id))
     const isCleared = netBalance === 0 && !theirPending.length && !hasPending
     return { u, balObj, netBalance, myPending, myPendingTotal, hasPending, theirPending, txns, sharedGroups, isCleared }
@@ -2960,47 +3057,13 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
         </button>
       </div>
 
-      {/* Incoming pending: they sent me a payment, I approve/reject */}
+      {/* Incoming pending: expandable approval cards with expense breakdown */}
       {theirPending.map(s => (
-        <div key={s.id} className="mx-3 mb-2 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-emerald-400">{s.payer_name} sent £{s.amount.toFixed(2)}</p>
-            <p className="text-[10px] text-slate-400">{new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })} · Awaiting your approval</p>
-          </div>
-          <button onClick={() => handleApprove(s.id, s.payer_name, s.amount)}
-            className="shrink-0 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
-            <Check className="h-3 w-3" /> Accept
-          </button>
-          <button onClick={() => handleReject(s.id, s.payer_name, s.amount)}
-            className="shrink-0 px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
-            <X className="h-3 w-3" /> Reject
-          </button>
-        </div>
+        <SettlementApprovalCard key={s.id} s={s} onApprove={handleApprove} onReject={handleReject} />
       ))}
 
-      {/* Settlement transaction history */}
-      {txns.length > 0 && (
-        <div className="border-t border-slate-700/40 px-4 py-2 space-y-1.5">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Settle-up history</p>
-          {txns.map(s => {
-            const iSent = s.payer_id === currentUser.id
-            const statusColor = s.status === 'approved' ? 'text-emerald-400' : s.status === 'pending' ? 'text-amber-400' : 'text-rose-400'
-            const statusLabel = s.status === 'approved' ? 'Approved' : s.status === 'pending' ? 'Pending' : 'Rejected'
-            const now = Date.now()
-            const diffMin = Math.floor((now - new Date(s.created_at).getTime()) / 60000)
-            const rel = diffMin < 60 ? `${diffMin}m ago` : diffMin < 1440 ? `${Math.floor(diffMin/60)}h ago` : new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })
-            return (
-              <div key={s.id} className="flex items-center gap-2 text-xs">
-                <span className={`shrink-0 text-[10px] font-bold ${statusColor}`}>{statusLabel}</span>
-                <span className="text-slate-400 flex-1 truncate">
-                  {iSent ? `You paid ${u.name}` : `${u.name} paid you`} £{s.amount.toFixed(2)}
-                </span>
-                <span className="text-slate-600 text-[10px] shrink-0">{rel}</span>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      {/* Settlement transaction history — all records, collapsed if > 3 */}
+      {txns.length > 0 && <SettleHistory txns={txns} currentUser={currentUser} otherName={u.name} />}
     </motion.div>
   )
 
