@@ -15,7 +15,7 @@ import {
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
   fetchAllUserBalances, createSettlement, quickSettle, approveSettlement, rejectSettlement, fetchPendingSettlements,
-  fetchInitiatedSettlements,
+  fetchInitiatedSettlements, fetchAllSettlements,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications, adminWipeTransactions,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
   renameGroup, fetchHealth, setToken, clearToken, getToken,
@@ -468,6 +468,7 @@ function Dashboard({ user, onLogout }) {
   const [globalBalances, setGlobalBalances] = useState([])
   const [pendingSettlements, setPendingSettlements] = useState([])
   const [initiatedSettlements, setInitiatedSettlements] = useState([])
+  const [allSettlements, setAllSettlements] = useState([])
   const [showPendingSettlements, setShowPendingSettlements] = useState(false)
   const [slowLoad, setSlowLoad] = useState(false)
   const wsRef = useRef(null)
@@ -502,11 +503,13 @@ function Dashboard({ user, onLogout }) {
             Promise.all([
               fetchAllUserBalances(user.id),
               fetchPendingSettlements(user.id),
-              fetchInitiatedSettlements(user.id)
-            ]).then(([b, ps, is]) => {
+              fetchInitiatedSettlements(user.id),
+              fetchAllSettlements(user.id),
+            ]).then(([b, ps, is, as_]) => {
               setGlobalBalances(b)
               setPendingSettlements(ps)
               setInitiatedSettlements(is)
+              setAllSettlements(as_)
             }).catch(() => {})
             window.dispatchEvent(new CustomEvent('ws_group_refresh', { detail: { group_id: data.group_id } }))
           }
@@ -534,13 +537,14 @@ function Dashboard({ user, onLogout }) {
     // Show "waking up" message if server takes >5s (Render cold start)
     const slowTimer = setTimeout(() => setSlowLoad(true), 5000)
     try {
-      const [g, u, n, b, ps, is] = await Promise.all([
+      const [g, u, n, b, ps, is, as_] = await Promise.all([
         fetchUserGroups(user.id),
         fetchUsers(),
         fetchNotifications(user.id),
         fetchAllUserBalances(user.id),
         fetchPendingSettlements(user.id),
-        fetchInitiatedSettlements(user.id)
+        fetchInitiatedSettlements(user.id),
+        fetchAllSettlements(user.id),
       ])
       setGroups(g)
       setUsers(u)
@@ -548,6 +552,7 @@ function Dashboard({ user, onLogout }) {
       setGlobalBalances(b)
       setPendingSettlements(ps)
       setInitiatedSettlements(is)
+      setAllSettlements(as_)
     } finally {
       clearTimeout(slowTimer)
       setSlowLoad(false)
@@ -765,7 +770,7 @@ function Dashboard({ user, onLogout }) {
                     <ActivityTab currentUser={user} groups={groups} />
                   )}
                   {activeTab === 'people' && (
-                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} onSettle={loadData} />
+                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} pendingSettlements={pendingSettlements} allSettlements={allSettlements} onSettle={loadData} />
                   )}
                 </motion.div>
               </AnimatePresence>
@@ -2771,8 +2776,15 @@ function ActivityTab({ currentUser, groups }) {
 }
 
 // ── People Tab ────────────────────────────────────────────────────────────────
-function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initiatedSettlements = [], onSettle }) {
+function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initiatedSettlements = [], pendingSettlements = [], allSettlements = [], onSettle }) {
   const [selectedBalance, setSelectedBalance] = useState(null)
+  const [actionMsg, setActionMsg] = useState(null) // { text, type: 'success'|'error' }
+
+  const showMsg = (text, type = 'success') => {
+    setActionMsg({ text, type })
+    setTimeout(() => setActionMsg(null), 3000)
+  }
+
   const visibleUsers = currentUser?.is_admin ? users : users.filter(u => {
     if (u.id === currentUser.id) return true
     return groups.some(g => g.members?.some(m => m.id === u.id))
@@ -2791,54 +2803,148 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
         }
       }
       setSelectedBalance(null)
+      showMsg('Settlement request sent. Waiting for approval.')
       if (onSettle) onSettle()
     } catch (e) {
-      alert(e.message || "Failed to send settlement request.")
+      showMsg(e.message || "Failed to send settlement request.", 'error')
+    }
+  }
+
+  const handleApprove = async (id, payerName, amount) => {
+    try {
+      await approveSettlement(id)
+      showMsg(`Payment of £${amount.toFixed(2)} from ${payerName} approved!`)
+      if (onSettle) onSettle()
+    } catch (e) {
+      showMsg(e.message || "Failed to approve.", 'error')
+    }
+  }
+  const handleReject = async (id, payerName, amount) => {
+    try {
+      await rejectSettlement(id)
+      showMsg(`Payment of £${amount.toFixed(2)} from ${payerName} rejected.`, 'error')
+      if (onSettle) onSettle()
+    } catch (e) {
+      showMsg(e.message || "Failed to reject.", 'error')
     }
   }
 
   return (
-    <div className="pt-6 space-y-2">
+    <div className="pt-6 space-y-3">
       <h2 className="text-xl font-bold text-white mb-4">People</h2>
+
+      {/* Action feedback toast */}
+      <AnimatePresence>
+        {actionMsg && (
+          <motion.div key="action-toast" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium ${
+              actionMsg.type === 'error'
+                ? 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+            }`}>
+            {actionMsg.type === 'error' ? <X className="h-4 w-4 shrink-0" /> : <Check className="h-4 w-4 shrink-0" />}
+            {actionMsg.text}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {visibleUsers.length === 0 && <p className="text-slate-500 text-sm">No people to show yet. Join a group!</p>}
       {visibleUsers.map((u, i) => {
+        if (u.id === currentUser.id) return null
         const balObj = globalBalances.find(b => b.other_user_id === u.id)
         const netBalance = balObj ? balObj.net_balance : 0
         const isCleared = netBalance === 0
-        const hasPending = initiatedSettlements.some(s => s.payee_id === u.id && s.status === 'pending')
+
+        // Outgoing pending settlements (I sent, waiting for their approval)
+        const myPending = initiatedSettlements.filter(s => s.payee_id === u.id && s.status === 'pending')
+        const myPendingTotal = myPending.reduce((sum, s) => sum + s.amount, 0)
+        const hasPending = myPending.length > 0
+
+        // Incoming pending settlements (they sent, I need to approve/reject)
+        const theirPending = pendingSettlements.filter(s => s.payer_id === u.id)
+
+        // All settlement transactions between me and this person
+        const txns = allSettlements
+          .filter(s => (s.payer_id === u.id || s.payee_id === u.id) && s.expense_id == null)
+          .slice(0, 5)
 
         return (
           <motion.div key={u.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
-            className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-2xl px-4 py-3">
-            <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
-              {u.name.charAt(0).toUpperCase()}
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-slate-100">{u.name} {u.id === currentUser.id && <span className="text-indigo-400 text-xs">(You)</span>}</p>
-              <p className="text-xs text-slate-500">{u.email}</p>
-            </div>
-            {u.id !== currentUser.id && (
+            className="bg-slate-800/40 border border-slate-700/30 rounded-2xl overflow-hidden">
+            {/* Header row */}
+            <div className="flex items-center gap-3 px-4 py-3">
+              <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
+                {u.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-100 truncate">{u.name}</p>
+                <p className="text-xs text-slate-500 truncate">{u.email}</p>
+              </div>
               <button
                 onClick={() => !isCleared && !hasPending && setSelectedBalance(balObj)}
-                className={`px-3 py-1.5 rounded-full text-xs font-bold tracking-wide transition-colors ${
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold tracking-wide transition-colors ${
                   isCleared ? 'bg-slate-700/50 text-slate-400 cursor-default' :
                   hasPending ? 'bg-amber-500/10 text-amber-400 cursor-default border border-amber-500/20' :
                   netBalance > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' :
                   'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
                 }`}
               >
-                {isCleared ? 'Cleared' : hasPending ? 'Pending approval…' : netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` : `You owe £${Math.abs(netBalance).toFixed(2)}`}
+                {isCleared ? 'Cleared' :
+                  hasPending ? `Pending £${myPendingTotal.toFixed(2)}` :
+                  netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` :
+                  `You owe £${Math.abs(netBalance).toFixed(2)}`}
               </button>
+            </div>
+
+            {/* Incoming pending: they sent me a payment, I approve/reject */}
+            {theirPending.map(s => (
+              <div key={s.id} className="mx-3 mb-2 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-emerald-400">{s.payer_name} sent £{s.amount.toFixed(2)}</p>
+                  <p className="text-[10px] text-slate-400">{new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })} · Awaiting your approval</p>
+                </div>
+                <button onClick={() => handleApprove(s.id, s.payer_name, s.amount)}
+                  className="shrink-0 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
+                  <Check className="h-3 w-3" /> Accept
+                </button>
+                <button onClick={() => handleReject(s.id, s.payer_name, s.amount)}
+                  className="shrink-0 px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
+                  <X className="h-3 w-3" /> Reject
+                </button>
+              </div>
+            ))}
+
+            {/* Settlement transaction history */}
+            {txns.length > 0 && (
+              <div className="border-t border-slate-700/40 px-4 py-2 space-y-1.5">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Settle-up history</p>
+                {txns.map(s => {
+                  const iSent = s.payer_id === currentUser.id
+                  const statusColor = s.status === 'approved' ? 'text-emerald-400' : s.status === 'pending' ? 'text-amber-400' : 'text-rose-400'
+                  const statusLabel = s.status === 'approved' ? 'Approved' : s.status === 'pending' ? 'Pending' : 'Rejected'
+                  return (
+                    <div key={s.id} className="flex items-center gap-2 text-xs">
+                      <span className={`shrink-0 text-[10px] font-bold ${statusColor}`}>{statusLabel}</span>
+                      <span className="text-slate-400 flex-1">
+                        {iSent ? `You paid ${u.name}` : `${u.name} paid you`} £{s.amount.toFixed(2)}
+                      </span>
+                      <span className="text-slate-600 text-[10px] shrink-0">
+                        {new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
             )}
           </motion.div>
         )
       })}
-      
+
       <AnimatePresence>
         {selectedBalance && (
-          <BalanceBreakdownModal 
-            balanceObj={selectedBalance} 
-            onClose={() => setSelectedBalance(null)} 
+          <BalanceBreakdownModal
+            balanceObj={selectedBalance}
+            onClose={() => setSelectedBalance(null)}
             onSettleGlobal={handleSettleGlobal}
           />
         )}
