@@ -321,7 +321,7 @@ export const fetchAdminNotifications = (userId = null) =>
   apiFetch(`/admin/notifications${userId ? `?user_id=${userId}` : ''}`).catch(() => []);
 
 export const adminWipeTransactions = (confirmPhrase) =>
-  apiFetch('/admin/wipe_transactions', { method: 'DELETE', body: JSON.stringify({ confirm: confirmPhrase }) });
+  apiFetch('/admin/wipe_transactions', { method: 'POST', body: JSON.stringify({ confirm: confirmPhrase }) });
 
 // ── Misc ──────────────────────────────────────────────────────────────────────
 

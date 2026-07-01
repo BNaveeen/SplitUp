@@ -181,7 +181,7 @@ class WipeConfirmRequest(BaseModel):
     confirm: str  # Must equal "DELETE ALL TRANSACTIONS"
 
 
-@router.delete("/admin/wipe_transactions")
+@router.post("/admin/wipe_transactions")
 def admin_wipe_transactions(
     req: WipeConfirmRequest,
     current_user_id: int = Depends(get_current_user_id),
