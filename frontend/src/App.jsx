@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 // CACHE BUST FOR VITE FAST REFRESH
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Wallet, Users, LayoutGrid, LogOut, Loader2, CheckCircle, CheckCircle2,
+  Wallet, Users, LayoutGrid, LogOut, Loader2, Check, CheckCircle, CheckCircle2,
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
