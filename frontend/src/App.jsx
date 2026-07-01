@@ -6,7 +6,7 @@ import {
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
-  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap
+  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -647,34 +647,86 @@ function Dashboard({ user, onLogout }) {
             <div className="relative">
               <button onClick={() => setShowNotifs(!showNotifs)} className="relative p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
                 <Bell className="h-4 w-4" />
-                {notifications.some(n => !n.is_read) && (
-                  <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-slate-900"></span>
+                {notifications.filter(n => !n.is_read).length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 flex items-center justify-center rounded-full bg-rose-500 ring-2 ring-slate-900 text-[9px] font-bold text-white leading-none">
+                    {notifications.filter(n => !n.is_read).length > 9 ? '9+' : notifications.filter(n => !n.is_read).length}
+                  </span>
                 )}
               </button>
               {showNotifs && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowNotifs(false)} />
-                  <div className="absolute top-12 right-0 w-72 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden z-50">
-                  <div className="p-3 border-b border-slate-700/50 bg-slate-900/50 flex justify-between items-center">
-                    <span className="font-semibold text-sm text-slate-200">Notifications</span>
-                    <button onClick={() => setShowNotifs(false)} className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="text-xs text-slate-500 text-center py-6">No notifications</p>
-                    ) : (
-                      notifications.map(n => (
-                        <div key={n.id} onClick={() => handleMarkRead(n.id, n)}
-                          className={`p-3 text-xs border-b border-slate-700/50 cursor-pointer hover:bg-slate-700/50 transition-colors ${!n.is_read ? 'bg-indigo-500/10' : ''}`}>
-                          <p className={`text-slate-300 ${!n.is_read ? 'font-medium' : ''}`}>{n.message}</p>
-                          <p className="text-[9px] text-slate-500 mt-1">{new Date(n.created_at).toLocaleString()}</p>
+                  <motion.div initial={{ opacity: 0, y: -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                    className="absolute top-12 right-0 w-80 bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden z-50">
+                    {/* Header */}
+                    <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Bell className="h-4 w-4 text-indigo-400" />
+                        <span className="font-semibold text-sm text-slate-100">Notifications</span>
+                        {notifications.filter(n => !n.is_read).length > 0 && (
+                          <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded-full">
+                            {notifications.filter(n => !n.is_read).length} new
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {notifications.some(n => !n.is_read) && (
+                          <button
+                            onClick={async () => {
+                              const unread = notifications.filter(n => !n.is_read)
+                              await Promise.all(unread.map(n => markNotificationRead(n.id).catch(() => {})))
+                              setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })))
+                            }}
+                            className="text-[10px] font-medium text-indigo-400 hover:text-indigo-300 px-2 py-1 rounded-lg hover:bg-indigo-500/10 transition-colors">
+                            Mark all read
+                          </button>
+                        )}
+                        <button onClick={() => setShowNotifs(false)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    {/* List */}
+                    <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-800">
+                      {notifications.length === 0 ? (
+                        <div className="py-12 text-center">
+                          <Bell className="h-8 w-8 mx-auto mb-2 text-slate-700" />
+                          <p className="text-xs font-medium text-slate-500">All caught up!</p>
+                          <p className="text-[10px] text-slate-600 mt-0.5">No notifications yet</p>
                         </div>
-                      ))
-                    )}
-                  </div>
-                  </div>
+                      ) : (
+                        notifications.map(n => {
+                          const msg = n.message.toLowerCase()
+                          const Icon = msg.includes('paid') || msg.includes('payment') || msg.includes('settle') ? CreditCard
+                            : msg.includes('expense') || msg.includes('added') ? Receipt
+                            : msg.includes('approved') || msg.includes('confirmed') ? Check
+                            : msg.includes('rejected') ? X
+                            : Bell
+                          const now = Date.now()
+                          const created = new Date(n.created_at).getTime()
+                          const diffMin = Math.floor((now - created) / 60000)
+                          const relTime = diffMin < 1 ? 'just now'
+                            : diffMin < 60 ? `${diffMin}m ago`
+                            : diffMin < 1440 ? `${Math.floor(diffMin / 60)}h ago`
+                            : diffMin < 10080 ? `${Math.floor(diffMin / 1440)}d ago`
+                            : new Date(n.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                          return (
+                            <div key={n.id} onClick={() => handleMarkRead(n.id, n)}
+                              className={`flex gap-3 px-4 py-3 cursor-pointer transition-colors hover:bg-slate-800/60 ${!n.is_read ? 'bg-indigo-500/5' : ''}`}>
+                              <div className={`shrink-0 h-8 w-8 rounded-full flex items-center justify-center mt-0.5 ${!n.is_read ? 'bg-indigo-500/15 text-indigo-400' : 'bg-slate-800 text-slate-500'}`}>
+                                <Icon className="h-3.5 w-3.5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-xs leading-relaxed ${!n.is_read ? 'text-slate-100 font-medium' : 'text-slate-400'}`}>{n.message}</p>
+                                <p className="text-[10px] text-slate-600 mt-1">{relTime}</p>
+                              </div>
+                              {!n.is_read && <div className="shrink-0 mt-2 h-1.5 w-1.5 rounded-full bg-indigo-500"></div>}
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  </motion.div>
                 </>
               )}
             </div>
