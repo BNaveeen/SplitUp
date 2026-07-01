@@ -1236,7 +1236,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
             <div className="flex items-center gap-3">
               <TrendingUp className="h-5 w-5 text-emerald-400 shrink-0" />
               <div>
-                <p className="text-xs text-emerald-400/70 font-medium">You are owed</p>
+                <p className="text-xs text-emerald-400/70 font-medium">You'll receive</p>
                 <p className="text-2xl font-bold text-emerald-400">£{myBalance.toFixed(2)}</p>
               </div>
             </div>
@@ -1244,14 +1244,14 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
             <div className="flex items-center gap-3">
               <TrendingDown className="h-5 w-5 text-rose-400 shrink-0" />
               <div>
-                <p className="text-xs text-rose-400/70 font-medium">You owe overall</p>
+                <p className="text-xs text-rose-400/70 font-medium">You need to pay</p>
                 <p className="text-2xl font-bold text-rose-400">£{Math.abs(myBalance).toFixed(2)}</p>
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-3">
               <CheckCircle2 className="h-5 w-5 text-slate-400" />
-              <p className="text-slate-400 font-medium">All settled up!</p>
+              <p className="text-slate-400 font-medium">You're all even!</p>
             </div>
           )}
         </div>
@@ -2363,16 +2363,16 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
 
               let balLabel = '', balColor = ''
               if (iPaid && mySplit) {
-                const lent = e.amount - mySplit.amount
-                if (lent > 0.005) {
-                  balLabel = `you lent £${lent.toFixed(2)}`
+                const paidForOthers = e.amount - mySplit.amount
+                if (paidForOthers > 0.005) {
+                  balLabel = `you paid £${paidForOthers.toFixed(2)} for others`
                   balColor = 'text-emerald-400'
                 } else {
                   balLabel = 'not involved'
                   balColor = 'text-slate-500'
                 }
               } else if (!iPaid && mySplit) {
-                balLabel = `you borrowed £${mySplit.amount.toFixed(2)}`
+                balLabel = `others paid £${mySplit.amount.toFixed(2)} for you`
                 balColor = 'text-rose-400'
               } else {
                 balLabel = 'not involved'
@@ -2520,7 +2520,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                         }`}>
                           {ss.status === 'cleared' ? '✓' : ss.status === 'pending' ? '⏳' : '·'}
                           {ss.user_id === currentUser.id ? 'You' : ss.user_name}
-                          {ss.status === 'cleared' ? ' paid' : ss.status === 'pending' ? ' waiting' : ` owes £${ss.amount.toFixed(2)}`}
+                          {ss.status === 'cleared' ? ' paid' : ss.status === 'pending' ? " hasn't paid" : ` needs to pay £${ss.amount.toFixed(2)}`}
                         </span>
                       ))}
                     </div>
@@ -2706,7 +2706,7 @@ function InsightsTab({ expenses, members, group }) {
               <span className="text-sm text-slate-300">{m.name}</span>
               <div className="text-right">
                 <p className="text-sm font-semibold text-emerald-400">paid £{m.paid.toFixed(2)}</p>
-                <p className="text-xs text-slate-500">owes £{m.share.toFixed(2)}</p>
+                <p className="text-xs text-slate-500">share £{m.share.toFixed(2)}</p>
               </div>
             </div>
           ))}
@@ -2752,7 +2752,7 @@ function BalanceRow({ b, currentUser, index }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm text-slate-200">
           <span className="font-semibold">{b.from_user_id === currentUser.id ? 'You' : b.from_user_name}</span>
-          <span className="text-slate-400"> owe </span>
+          <span className="text-slate-400"> need{b.from_user_id === currentUser.id ? '' : 's'} to pay </span>
           <span className="font-semibold">{b.to_user_id === currentUser.id ? 'you' : b.to_user_name}</span>
         </p>
       </div>
@@ -2770,8 +2770,8 @@ function BalanceList({ balances, currentUser, members }) {
     return (
       <div className="text-center py-12 text-slate-500 mt-2">
         <CheckCircle2 className="h-10 w-10 mx-auto mb-3 opacity-40 text-emerald-500" />
-        <p className="font-medium text-emerald-400">All settled up!</p>
-        <p className="text-sm mt-1 text-slate-500">No outstanding balances in this group</p>
+        <p className="font-medium text-emerald-400">You're all even!</p>
+        <p className="text-sm mt-1 text-slate-500">No money to exchange in this group</p>
       </div>
     )
   }
@@ -2786,7 +2786,7 @@ function BalanceList({ balances, currentUser, members }) {
         <button onClick={() => setSimplified(s => !s)}
           className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${simplified ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'}`}>
           <Zap className="h-3 w-3" />
-          {simplified ? 'Simplified' : 'Simplify Debts'}
+          {simplified ? 'Simplified' : 'Reduce Payments'}
         </button>
       </div>
       {simplified && balances.length > displayed.length && (
@@ -2840,7 +2840,7 @@ function SettleHistory({ txns, currentUser, otherName }) {
       {visible.map(s => {
         const iSent = s.payer_id === currentUser.id
         const statusColor = s.status === 'approved' ? 'text-emerald-400' : s.status === 'pending' ? 'text-amber-400' : 'text-rose-400'
-        const statusLabel = s.status === 'approved' ? 'Paid' : s.status === 'pending' ? 'Pending' : 'Rejected'
+        const statusLabel = s.status === 'approved' ? 'Paid' : s.status === 'pending' ? 'Waiting' : 'Declined'
         const now = Date.now()
         const diffMin = Math.floor((now - new Date(s.created_at).getTime()) / 60000)
         const rel = diffMin < 1 ? 'just now' : diffMin < 60 ? `${diffMin}m ago` : diffMin < 1440 ? `${Math.floor(diffMin/60)}h ago` : new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'2-digit' })
@@ -3049,11 +3049,11 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
             'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 cursor-pointer'
           }`}
         >
-          {isCleared ? 'Settled' :
-            hasPending ? `Pending £${myPendingTotal.toFixed(2)}` :
-            theirPending.length ? `Needs approval` :
-            netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` :
-            `You owe £${Math.abs(netBalance).toFixed(2)}`}
+          {isCleared ? 'All done' :
+            hasPending ? `Sent £${myPendingTotal.toFixed(2)} · Waiting` :
+            theirPending.length ? `Check below` :
+            netBalance > 0 ? `Will pay you £${netBalance.toFixed(2)}` :
+            `You need to pay £${Math.abs(netBalance).toFixed(2)}`}
         </button>
       </div>
 
@@ -3083,11 +3083,11 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
       {(totalOwedToMe > 0 || totalIOwe > 0) && (
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl px-3 py-2.5">
-            <p className="text-[10px] font-bold text-emerald-500/70 uppercase tracking-wider">You're owed</p>
+            <p className="text-[10px] font-bold text-emerald-500/70 uppercase tracking-wider">You'll receive</p>
             <p className="text-lg font-bold text-emerald-400">£{totalOwedToMe.toFixed(2)}</p>
           </div>
           <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl px-3 py-2.5">
-            <p className="text-[10px] font-bold text-orange-500/70 uppercase tracking-wider">You owe</p>
+            <p className="text-[10px] font-bold text-orange-500/70 uppercase tracking-wider">To pay back</p>
             <p className="text-lg font-bold text-orange-400">£{totalIOwe.toFixed(2)}</p>
           </div>
         </div>
@@ -3134,7 +3134,7 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
           <button onClick={() => setShowCleared(v => !v)}
             className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors w-full py-1">
             <div className="flex-1 h-px bg-slate-700/50" />
-            <span>{showCleared ? 'Hide' : 'Show'} {clearedItems.length} settled</span>
+            <span>{showCleared ? 'Hide' : 'Show'} {clearedItems.length} all done</span>
             <ChevronRight className={`h-3 w-3 transition-transform ${showCleared ? 'rotate-90' : ''}`} />
             <div className="flex-1 h-px bg-slate-700/50" />
           </button>
@@ -3177,9 +3177,9 @@ function BalanceBreakdownModal({ balanceObj, onClose, onSettleGlobal }) {
         </div>
         <div className="p-5 overflow-y-auto custom-scrollbar">
           <div className="flex flex-col items-center justify-center p-4 mb-6 bg-slate-800/50 rounded-2xl border border-slate-700/50">
-            <p className="text-sm text-slate-400 mb-1">Total Net Balance</p>
+            <p className="text-sm text-slate-400 mb-1">Overall</p>
             <p className={`text-2xl font-bold ${balanceObj.net_balance > 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
-              {balanceObj.net_balance > 0 ? 'Owes you' : 'You owe'} £{Math.abs(balanceObj.net_balance).toFixed(2)}
+              {balanceObj.net_balance > 0 ? 'Will pay you' : 'You need to pay'} £{Math.abs(balanceObj.net_balance).toFixed(2)}
             </p>
           </div>
           
@@ -3200,7 +3200,7 @@ function BalanceBreakdownModal({ balanceObj, onClose, onSettleGlobal }) {
               onClick={() => onSettleGlobal(balanceObj)}
               className="w-full mt-6 py-3 bg-gradient-to-r from-orange-500 to-rose-500 text-white font-bold rounded-xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/40 transition-all hover:-translate-y-0.5 active:translate-y-0"
             >
-              Settle All
+              Pay All
             </button>
           )}
         </div>
