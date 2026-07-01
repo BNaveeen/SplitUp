@@ -14,7 +14,7 @@ import {
   updateUser, updateExpense, deleteExpense, approveExpenseDeletion, rejectExpenseDeletion,
   fetchExpenseChat, postExpenseMessage, fetchNotifications, markNotificationRead, cancelExpenseDeletion,
   fetchAdminUsers, deleteAdminUser, deleteAdminGroup, getWsUrl, toggleAdminStatus, adminCreateUser,
-  fetchAllUserBalances, createSettlement, approveSettlement, rejectSettlement, fetchPendingSettlements,
+  fetchAllUserBalances, createSettlement, quickSettle, approveSettlement, rejectSettlement, fetchPendingSettlements,
   fetchInitiatedSettlements,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications, adminWipeTransactions,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
@@ -765,7 +765,7 @@ function Dashboard({ user, onLogout }) {
                     <ActivityTab currentUser={user} groups={groups} />
                   )}
                   {activeTab === 'people' && (
-                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} />
+                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} onSettle={loadData} />
                   )}
                 </motion.div>
               </AnimatePresence>
@@ -2771,7 +2771,7 @@ function ActivityTab({ currentUser, groups }) {
 }
 
 // ── People Tab ────────────────────────────────────────────────────────────────
-function PeopleTab({ users, currentUser, groups = [], globalBalances = [] }) {
+function PeopleTab({ users, currentUser, groups = [], globalBalances = [], onSettle }) {
   const [selectedBalance, setSelectedBalance] = useState(null)
   const visibleUsers = currentUser?.is_admin ? users : users.filter(u => {
     if (u.id === currentUser.id) return true
@@ -2782,18 +2782,18 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [] }) {
     try {
       for (const gb of balanceObj.group_balances) {
         if (gb.amount < 0) {
-          await createSettlement({
+          await quickSettle({
             payer_id: currentUser.id,
             payee_id: balanceObj.other_user_id,
             amount: Math.abs(gb.amount),
-            group_id: gb.group_id
+            group_id: gb.group_id,
           })
         }
       }
       setSelectedBalance(null)
-      alert("Settlement request sent to " + balanceObj.other_user_name)
+      if (onSettle) onSettle()
     } catch (e) {
-      alert("Failed to send settlement request.")
+      alert(e.message || "Failed to settle.")
     }
   }
 

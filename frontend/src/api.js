@@ -265,6 +265,9 @@ export const postExpenseMessage = (expenseId, userId, text, mentions = []) =>
 export const createSettlement = (data) =>
   apiFetch('/settlements/', { method: 'POST', body: JSON.stringify(data) });
 
+export const quickSettle = (data) =>
+  apiFetch('/settlements/quick_settle', { method: 'POST', body: JSON.stringify(data) });
+
 export const approveSettlement = (id) =>
   apiFetch(`/settlements/${id}/approve`, { method: 'POST' });
 

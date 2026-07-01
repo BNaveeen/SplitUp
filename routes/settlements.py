@@ -87,6 +87,42 @@ def approve_settlement(
     return {"message": "Settlement approved."}
 
 
+@router.post("/settlements/quick_settle")
+def quick_settle(
+    req: SettlementCreate,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Create a settlement and mark it approved immediately — used by the People tab 'Settle All'."""
+    if req.payer_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Cannot settle on behalf of another user")
+    payer = db.query(User).filter(User.id == req.payer_id).first()
+    payee = db.query(User).filter(User.id == req.payee_id).first()
+    if not payer or not payee:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    settlement = Settlement(
+        payer_id=req.payer_id, payee_id=req.payee_id,
+        amount=req.amount, group_id=req.group_id,
+        status="approved",
+    )
+    db.add(settlement)
+    db.commit()
+
+    group_name = "a group"
+    if req.group_id:
+        group = db.query(Group).filter(Group.id == req.group_id).first()
+        if group:
+            group_name = group.name
+    _add_notification(
+        db, req.payee_id,
+        f"{payer.name} marked £{req.amount:.2f} as settled in {group_name}.",
+        group_id=req.group_id,
+    )
+    _push_group_event(db, req.group_id)
+    return {"message": "Settled."}
+
+
 @router.post("/settlements/{settlement_id}/reject")
 def reject_settlement(
     settlement_id: int,
