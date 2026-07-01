@@ -19,3 +19,7 @@ def set_cached_balances(group_id: int, data: list):
 def invalidate_balance(group_id: Optional[int]):
     if group_id:
         _balance_cache.pop(group_id, None)
+
+
+def invalidate_all_balances():
+    _balance_cache.clear()

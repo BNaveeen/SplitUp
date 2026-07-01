@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from database import User, Group, Expense, ExpenseSplit, ExpenseMessage, ExpenseDeletionApproval, Notification, Settlement
 from routes.deps import get_db, get_current_user_id, hash_password
 from services.helpers import _format_expense, _EXPENSE_LOAD_OPTIONS
+from services.cache import invalidate_all_balances
 from schemas import UserRegister, UserResponse, SettlementResponse
 
 router = APIRouter()
@@ -198,6 +199,7 @@ def admin_wipe_transactions(
     db.query(Notification).delete(synchronize_session=False)
     db.query(Expense).delete(synchronize_session=False)
     db.commit()
+    invalidate_all_balances()
     return {"message": "All transactions wiped. Users and groups are intact."}
 
 

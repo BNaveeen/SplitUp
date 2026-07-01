@@ -611,7 +611,7 @@ function Dashboard({ user, onLogout }) {
   ]
 
   if (showAdmin) {
-    return <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} />
+    return <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} onWipe={loadData} />
   }
 
   return (
@@ -1533,7 +1533,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 }
 
 // ── Admin Dashboard ───────────────────────────────────────────────────────────
-function AdminDashboard({ currentUser, onBack }) {
+function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [activeTab, setActiveTab]           = useState('overview')
   const [loading, setLoading]               = useState(true)
   const [stats, setStats]                   = useState(null)
@@ -1621,6 +1621,7 @@ function AdminDashboard({ currentUser, onBack }) {
       setShowWipeDialog(false); setWipeInput('')
       alert('All transactions wiped successfully. Users and groups are intact.')
       loadTab('overview')
+      if (onWipe) onWipe()  // refresh globalBalances, groups, etc. in the parent
     } catch (e) {
       setWipeError(e.message || 'Failed to wipe transactions.')
     } finally { setWipeLoading(false) }
