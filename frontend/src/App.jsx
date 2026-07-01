@@ -2830,17 +2830,59 @@ function ActivityTab({ currentUser, groups }) {
 // ── People Tab ────────────────────────────────────────────────────────────────
 function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initiatedSettlements = [], pendingSettlements = [], allSettlements = [], onSettle }) {
   const [selectedBalance, setSelectedBalance] = useState(null)
-  const [actionMsg, setActionMsg] = useState(null) // { text, type: 'success'|'error' }
+  const [actionMsg, setActionMsg] = useState(null)
+  const [search, setSearch] = useState('')
+  const [showCleared, setShowCleared] = useState(false)
 
   const showMsg = (text, type = 'success') => {
     setActionMsg({ text, type })
     setTimeout(() => setActionMsg(null), 3000)
   }
 
-  const visibleUsers = currentUser?.is_admin ? users : users.filter(u => {
-    if (u.id === currentUser.id) return true
+  const baseUsers = (currentUser?.is_admin ? users : users.filter(u => {
+    if (u.id === currentUser.id) return false
     return groups.some(g => g.members?.some(m => m.id === u.id))
+  })).filter(u => u.id !== currentUser.id)
+
+  // Enrich each user with balance + pending info so we can sort
+  const enriched = baseUsers.map(u => {
+    const balObj = globalBalances.find(b => b.other_user_id === u.id)
+    const netBalance = balObj ? balObj.net_balance : 0
+    const myPending = initiatedSettlements.filter(s => s.payee_id === u.id && s.status === 'pending')
+    const myPendingTotal = myPending.reduce((sum, s) => sum + s.amount, 0)
+    const hasPending = myPending.length > 0
+    const theirPending = pendingSettlements.filter(s => s.payer_id === u.id)
+    const txns = allSettlements
+      .filter(s => (s.payer_id === u.id || s.payee_id === u.id) && s.expense_id == null)
+      .slice(0, 5)
+    const sharedGroups = groups.filter(g => g.members?.some(m => m.id === u.id))
+    const isCleared = netBalance === 0 && !theirPending.length && !hasPending
+    return { u, balObj, netBalance, myPending, myPendingTotal, hasPending, theirPending, txns, sharedGroups, isCleared }
   })
+
+  // Sort: incoming pending first → outgoing pending → owes you → you owe → cleared
+  const priority = ({ theirPending, hasPending, isCleared, netBalance }) => {
+    if (theirPending.length) return 0
+    if (hasPending) return 1
+    if (!isCleared && netBalance > 0) return 2
+    if (!isCleared && netBalance < 0) return 3
+    return 4
+  }
+  const filtered = enriched
+    .filter(e => !search || e.u.name.toLowerCase().includes(search.toLowerCase()) || e.u.email.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      const pd = priority(a) - priority(b)
+      if (pd !== 0) return pd
+      return Math.abs(b.netBalance) - Math.abs(a.netBalance)
+    })
+
+  const activeItems = filtered.filter(e => !e.isCleared)
+  const clearedItems = filtered.filter(e => e.isCleared)
+
+  // Summary totals
+  const totalOwedToMe = globalBalances.filter(b => b.net_balance > 0).reduce((s, b) => s + b.net_balance, 0)
+  const totalIOwe = globalBalances.filter(b => b.net_balance < 0).reduce((s, b) => s + Math.abs(b.net_balance), 0)
+  const incomingCount = pendingSettlements.length
 
   const handleSettleGlobal = async (balanceObj) => {
     try {
@@ -2881,9 +2923,121 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
     }
   }
 
+  const renderCard = ({ u, balObj, netBalance, myPendingTotal, hasPending, theirPending, txns, sharedGroups, isCleared }, i) => (
+    <motion.div key={u.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.035 }}
+      className="bg-slate-800/40 border border-slate-700/30 rounded-2xl overflow-hidden">
+      {/* Header row */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
+          {u.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-slate-100 truncate">{u.name}</p>
+          {sharedGroups.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {sharedGroups.slice(0, 3).map(g => (
+                <span key={g.id} className="text-[10px] bg-slate-700/50 text-slate-400 px-1.5 py-0.5 rounded-full">{g.name}</span>
+              ))}
+              {sharedGroups.length > 3 && <span className="text-[10px] text-slate-500">+{sharedGroups.length - 3}</span>}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={() => !isCleared && !hasPending && setSelectedBalance(balObj)}
+          className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold tracking-wide transition-colors ${
+            isCleared ? 'bg-slate-700/40 text-slate-500 cursor-default' :
+            hasPending ? 'bg-amber-500/10 text-amber-400 cursor-default border border-amber-500/20' :
+            theirPending.length ? 'bg-indigo-500/10 text-indigo-400 cursor-default border border-indigo-500/20' :
+            netBalance > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 cursor-pointer' :
+            'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 cursor-pointer'
+          }`}
+        >
+          {isCleared ? 'Settled' :
+            hasPending ? `Pending £${myPendingTotal.toFixed(2)}` :
+            theirPending.length ? `Needs approval` :
+            netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` :
+            `You owe £${Math.abs(netBalance).toFixed(2)}`}
+        </button>
+      </div>
+
+      {/* Incoming pending: they sent me a payment, I approve/reject */}
+      {theirPending.map(s => (
+        <div key={s.id} className="mx-3 mb-2 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-emerald-400">{s.payer_name} sent £{s.amount.toFixed(2)}</p>
+            <p className="text-[10px] text-slate-400">{new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })} · Awaiting your approval</p>
+          </div>
+          <button onClick={() => handleApprove(s.id, s.payer_name, s.amount)}
+            className="shrink-0 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
+            <Check className="h-3 w-3" /> Accept
+          </button>
+          <button onClick={() => handleReject(s.id, s.payer_name, s.amount)}
+            className="shrink-0 px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
+            <X className="h-3 w-3" /> Reject
+          </button>
+        </div>
+      ))}
+
+      {/* Settlement transaction history */}
+      {txns.length > 0 && (
+        <div className="border-t border-slate-700/40 px-4 py-2 space-y-1.5">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Settle-up history</p>
+          {txns.map(s => {
+            const iSent = s.payer_id === currentUser.id
+            const statusColor = s.status === 'approved' ? 'text-emerald-400' : s.status === 'pending' ? 'text-amber-400' : 'text-rose-400'
+            const statusLabel = s.status === 'approved' ? 'Approved' : s.status === 'pending' ? 'Pending' : 'Rejected'
+            const now = Date.now()
+            const diffMin = Math.floor((now - new Date(s.created_at).getTime()) / 60000)
+            const rel = diffMin < 60 ? `${diffMin}m ago` : diffMin < 1440 ? `${Math.floor(diffMin/60)}h ago` : new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })
+            return (
+              <div key={s.id} className="flex items-center gap-2 text-xs">
+                <span className={`shrink-0 text-[10px] font-bold ${statusColor}`}>{statusLabel}</span>
+                <span className="text-slate-400 flex-1 truncate">
+                  {iSent ? `You paid ${u.name}` : `${u.name} paid you`} £{s.amount.toFixed(2)}
+                </span>
+                <span className="text-slate-600 text-[10px] shrink-0">{rel}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </motion.div>
+  )
+
   return (
     <div className="pt-6 space-y-3">
-      <h2 className="text-xl font-bold text-white mb-4">People</h2>
+      {/* Header + summary */}
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-xl font-bold text-white">People</h2>
+        {incomingCount > 0 && (
+          <span className="text-xs font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">
+            {incomingCount} awaiting approval
+          </span>
+        )}
+      </div>
+
+      {/* Summary cards */}
+      {(totalOwedToMe > 0 || totalIOwe > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] font-bold text-emerald-500/70 uppercase tracking-wider">You're owed</p>
+            <p className="text-lg font-bold text-emerald-400">£{totalOwedToMe.toFixed(2)}</p>
+          </div>
+          <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] font-bold text-orange-500/70 uppercase tracking-wider">You owe</p>
+            <p className="text-lg font-bold text-orange-400">£{totalIOwe.toFixed(2)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Search */}
+      {baseUsers.length > 3 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search people…"
+            className="w-full bg-slate-800/60 border border-slate-700/40 rounded-xl pl-8 pr-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500" />
+        </div>
+      )}
 
       {/* Action feedback toast */}
       <AnimatePresence>
@@ -2900,97 +3054,37 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
         )}
       </AnimatePresence>
 
-      {visibleUsers.length === 0 && <p className="text-slate-500 text-sm">No people to show yet. Join a group!</p>}
-      {visibleUsers.map((u, i) => {
-        if (u.id === currentUser.id) return null
-        const balObj = globalBalances.find(b => b.other_user_id === u.id)
-        const netBalance = balObj ? balObj.net_balance : 0
-        const isCleared = netBalance === 0
+      {baseUsers.length === 0 && (
+        <div className="text-center py-12 border border-dashed border-slate-700 rounded-2xl">
+          <Users className="h-8 w-8 mx-auto mb-2 text-slate-600" />
+          <p className="text-slate-500 text-sm font-medium">No people yet</p>
+          <p className="text-xs text-slate-600 mt-0.5">Join a group to see people here</p>
+        </div>
+      )}
 
-        // Outgoing pending settlements (I sent, waiting for their approval)
-        const myPending = initiatedSettlements.filter(s => s.payee_id === u.id && s.status === 'pending')
-        const myPendingTotal = myPending.reduce((sum, s) => sum + s.amount, 0)
-        const hasPending = myPending.length > 0
+      {/* Active balances */}
+      {activeItems.map((e, i) => renderCard(e, i))}
 
-        // Incoming pending settlements (they sent, I need to approve/reject)
-        const theirPending = pendingSettlements.filter(s => s.payer_id === u.id)
-
-        // All settlement transactions between me and this person
-        const txns = allSettlements
-          .filter(s => (s.payer_id === u.id || s.payee_id === u.id) && s.expense_id == null)
-          .slice(0, 5)
-
-        return (
-          <motion.div key={u.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
-            className="bg-slate-800/40 border border-slate-700/30 rounded-2xl overflow-hidden">
-            {/* Header row */}
-            <div className="flex items-center gap-3 px-4 py-3">
-              <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
-                {u.name.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-slate-100 truncate">{u.name}</p>
-                <p className="text-xs text-slate-500 truncate">{u.email}</p>
-              </div>
-              <button
-                onClick={() => !isCleared && !hasPending && setSelectedBalance(balObj)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold tracking-wide transition-colors ${
-                  isCleared ? 'bg-slate-700/50 text-slate-400 cursor-default' :
-                  hasPending ? 'bg-amber-500/10 text-amber-400 cursor-default border border-amber-500/20' :
-                  netBalance > 0 ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' :
-                  'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'
-                }`}
-              >
-                {isCleared ? 'Cleared' :
-                  hasPending ? `Pending £${myPendingTotal.toFixed(2)}` :
-                  netBalance > 0 ? `Owes you £${netBalance.toFixed(2)}` :
-                  `You owe £${Math.abs(netBalance).toFixed(2)}`}
-              </button>
-            </div>
-
-            {/* Incoming pending: they sent me a payment, I approve/reject */}
-            {theirPending.map(s => (
-              <div key={s.id} className="mx-3 mb-2 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-emerald-400">{s.payer_name} sent £{s.amount.toFixed(2)}</p>
-                  <p className="text-[10px] text-slate-400">{new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })} · Awaiting your approval</p>
-                </div>
-                <button onClick={() => handleApprove(s.id, s.payer_name, s.amount)}
-                  className="shrink-0 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
-                  <Check className="h-3 w-3" /> Accept
-                </button>
-                <button onClick={() => handleReject(s.id, s.payer_name, s.amount)}
-                  className="shrink-0 px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-lg transition-colors flex items-center gap-1">
-                  <X className="h-3 w-3" /> Reject
-                </button>
-              </div>
-            ))}
-
-            {/* Settlement transaction history */}
-            {txns.length > 0 && (
-              <div className="border-t border-slate-700/40 px-4 py-2 space-y-1.5">
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Settle-up history</p>
-                {txns.map(s => {
-                  const iSent = s.payer_id === currentUser.id
-                  const statusColor = s.status === 'approved' ? 'text-emerald-400' : s.status === 'pending' ? 'text-amber-400' : 'text-rose-400'
-                  const statusLabel = s.status === 'approved' ? 'Approved' : s.status === 'pending' ? 'Pending' : 'Rejected'
-                  return (
-                    <div key={s.id} className="flex items-center gap-2 text-xs">
-                      <span className={`shrink-0 text-[10px] font-bold ${statusColor}`}>{statusLabel}</span>
-                      <span className="text-slate-400 flex-1">
-                        {iSent ? `You paid ${u.name}` : `${u.name} paid you`} £{s.amount.toFixed(2)}
-                      </span>
-                      <span className="text-slate-600 text-[10px] shrink-0">
-                        {new Date(s.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
+      {/* Cleared / settled section */}
+      {clearedItems.length > 0 && (
+        <div className="pt-1">
+          <button onClick={() => setShowCleared(v => !v)}
+            className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors w-full py-1">
+            <div className="flex-1 h-px bg-slate-700/50" />
+            <span>{showCleared ? 'Hide' : 'Show'} {clearedItems.length} settled</span>
+            <ChevronRight className={`h-3 w-3 transition-transform ${showCleared ? 'rotate-90' : ''}`} />
+            <div className="flex-1 h-px bg-slate-700/50" />
+          </button>
+          <AnimatePresence>
+            {showCleared && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                className="space-y-2 mt-2 overflow-hidden">
+                {clearedItems.map((e, i) => renderCard(e, i))}
+              </motion.div>
             )}
-          </motion.div>
-        )
-      })}
+          </AnimatePresence>
+        </div>
+      )}
 
       <AnimatePresence>
         {selectedBalance && (

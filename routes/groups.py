@@ -210,8 +210,13 @@ def get_group_balances(
         if total_owed:
             net[user_id] -= float(total_owed)
 
+    # Only count expense-level settlements; group-level "Settle All" records are
+    # already represented by their per-expense cascade entries, so counting both
+    # would double-subtract and corrupt the net balances.
     approved = db.query(Settlement).filter(
-        Settlement.group_id == group_id, Settlement.status == "approved"
+        Settlement.group_id == group_id,
+        Settlement.status == "approved",
+        Settlement.expense_id != None,
     ).all()
     for s in approved:
         if s.payer_id in net:
