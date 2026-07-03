@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 // CACHE BUST FOR VITE FAST REFRESH
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -6,7 +6,7 @@ import {
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
-  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard
+  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -18,7 +18,7 @@ import {
   fetchInitiatedSettlements, fetchAllSettlements, fetchSettlementBreakdown,
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications, adminWipeTransactions,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
-  renameGroup, fetchHealth, setToken, clearToken, getToken,
+  renameGroup, setToken, clearToken, getToken,
   verifyEmail, resendVerification, forgotPassword, resetPassword, changePassword
 } from './api'
 
@@ -39,6 +39,339 @@ function exportGroupToCSV(expenses, groupName, members = []) {
   a.download = `${groupName.replace(/\s+/g, '_')}_expenses_${new Date().toISOString().split('T')[0]}.csv`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// ── PDF Export (direct download via jsPDF) ────────────────────────────────────
+async function exportGroupToPDF(expenses, groupName, members = [], dateLabel = 'All time') {
+  const { jsPDF } = await import('jspdf')
+  const { default: autoTable } = await import('jspdf-autotable')
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const W  = doc.internal.pageSize.getWidth()   // 210 mm
+  const PH = doc.internal.pageSize.getHeight()  // 297 mm
+  const PX = 14
+  const CW = W - PX * 2                          // 182 mm
+
+  // ── Data ──
+  const active = expenses.filter(e =>
+    e.status === 'active' || e.status === 'pending_deletion' || e.status === 'approved_for_deletion'
+  )
+  const total  = active.reduce((s, e) => s + parseFloat(e.amount || 0), 0)
+  const avgExp = active.length ? total / active.length : 0
+
+  // Category totals
+  const catTotals = {}, catCounts = {}
+  active.forEach(e => {
+    const c = e.category || guessCategory(e.description)
+    catTotals[c] = (catTotals[c] || 0) + parseFloat(e.amount || 0)
+    catCounts[c] = (catCounts[c] || 0) + 1
+  })
+  const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 8)
+  const catPcts    = sortedCats.map(([, amt]) => total > 0 ? amt / total * 100 : 0)
+
+  // Member paid / owed
+  const mPaid = {}, mOwes = {}
+  members.forEach(m => { mPaid[m.id] = 0; mOwes[m.id] = 0 })
+  active.forEach(e => {
+    if (e.payer_id != null) mPaid[e.payer_id] = (mPaid[e.payer_id] || 0) + parseFloat(e.amount || 0)
+    ;(e.splits || []).forEach(s => { mOwes[s.user_id] = (mOwes[s.user_id] || 0) + parseFloat(s.amount || 0) })
+  })
+
+  // Top 5 by amount
+  const top5 = [...active].sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount)).slice(0, 5)
+
+  // Monthly trend — last 6 months
+  const now = new Date()
+  const monthlyTrend = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
+    const label = d.toLocaleDateString('en-GB', { month: 'short' })
+    const mTotal = active.filter(e => {
+      if (!e.date) return false
+      const ed = new Date(e.date)
+      return ed.getMonth() === d.getMonth() && ed.getFullYear() === d.getFullYear()
+    }).reduce((s, e) => s + parseFloat(e.amount || 0), 0)
+    return { label, total: mTotal }
+  })
+  const maxMonth = Math.max(...monthlyTrend.map(m => m.total), 1)
+
+  // ── Palette ──
+  const INDIGO  = [79, 70, 229]
+  const SLATE50 = [248, 250, 252]
+  const SLATE100 = [241, 245, 249]
+  const SLATE200 = [226, 232, 240]
+  const SLATE400 = [148, 163, 184]
+  const SLATE500 = [100, 116, 139]
+  const WHITE   = [255, 255, 255]
+  const EMERALD = [5, 150, 105]
+  const ROSE    = [220, 38, 38]
+  const CAT_COLORS = [
+    [79,70,229],[16,185,129],[245,158,11],[244,63,94],
+    [6,182,212],[139,92,246],[236,72,153],[34,197,94],
+  ]
+
+  // ── Helpers ──
+  const sectionHead = (label, y) => {
+    doc.setFillColor(...INDIGO)
+    doc.rect(PX, y + 0.5, 3, 5, 'F')
+    doc.setFontSize(8.5)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 30, 50)
+    doc.text(label, PX + 5.5, y + 4.5)
+    doc.setDrawColor(...SLATE200)
+    doc.setLineWidth(0.25)
+    doc.line(PX + 5.5 + doc.getTextWidth(label) + 3, y + 2.5, W - PX, y + 2.5)
+    return y + 9
+  }
+
+  const miniCard = (cx, cy, cw, ch, label, val, valColor) => {
+    doc.setFillColor(...SLATE50)
+    doc.setDrawColor(...SLATE200)
+    doc.setLineWidth(0.25)
+    doc.roundedRect(cx, cy, cw, ch, 2.5, 2.5, 'FD')
+    doc.setFontSize(6)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...SLATE500)
+    doc.text(label, cx + 4, cy + 5.5)
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...(valColor || INDIGO))
+    doc.text(String(val), cx + 4, cy + 14)
+  }
+
+  // ── Header ──
+  doc.setFillColor(...INDIGO)
+  doc.roundedRect(PX, 10, CW, 34, 4, 4, 'F')
+
+  doc.setTextColor(...WHITE)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(19)
+  doc.text('SplitUp', PX + 7, 25.5)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(6.5)
+  doc.setTextColor(199, 196, 255)
+  doc.text('EXPENSE REPORT', PX + 7, 31.5)
+
+  doc.setDrawColor(130, 110, 255)
+  doc.setLineWidth(0.4)
+  doc.line(PX + 50, 14, PX + 50, 40)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(13)
+  doc.setTextColor(...WHITE)
+  doc.text(groupName, W - PX - 6, 24, { align: 'right' })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(199, 196, 255)
+  doc.text(`Period: ${dateLabel}`, W - PX - 6, 30, { align: 'right' })
+  doc.text(
+    `Generated: ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`,
+    W - PX - 6, 36, { align: 'right' }
+  )
+
+  // ── 4 Summary cards ──
+  let y = 50
+  const c4W = (CW - 9) / 4, c4H = 22
+  miniCard(PX,                    y, c4W, c4H, 'TOTAL SPEND',  `£${total.toFixed(2)}`)
+  miniCard(PX + (c4W + 3),        y, c4W, c4H, 'TRANSACTIONS', String(active.length))
+  miniCard(PX + (c4W + 3) * 2,    y, c4W, c4H, 'AVG EXPENSE',  `£${avgExp.toFixed(2)}`)
+  miniCard(PX + (c4W + 3) * 3,    y, c4W, c4H, 'MEMBERS',      String(members.length))
+  y += c4H + 9
+
+  // ── Category breakdown ──
+  y = sectionHead('Spending by Category', y)
+
+  const catTableBody = sortedCats.map(([catId, catAmt]) => [
+    `${categoryIcons[catId] ?? '📦'} ${categoryMeta[catId]?.label ?? catId}`,
+    String(catCounts[catId]),
+    `£${catAmt.toFixed(2)}`,
+    '',   // bar drawn in didDrawCell
+  ])
+
+  autoTable(doc, {
+    startY: y,
+    margin: { left: PX, right: PX },
+    head: [['Category', 'Txns', 'Amount', 'Visual Share']],
+    body: catTableBody,
+    styles: { fontSize: 8, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 } },
+    headStyles: { fillColor: SLATE100, textColor: SLATE500, fontStyle: 'bold', fontSize: 7, lineColor: SLATE200, lineWidth: 0.25 },
+    columnStyles: {
+      0: { cellWidth: 62 },
+      1: { cellWidth: 14, halign: 'center', textColor: SLATE500 },
+      2: { cellWidth: 30, halign: 'right', fontStyle: 'bold', textColor: INDIGO },
+      3: { cellWidth: 76 },
+    },
+    alternateRowStyles: { fillColor: SLATE50 },
+    didDrawCell: (data) => {
+      if (data.column.index === 3 && data.section === 'body') {
+        const pct = catPcts[data.row.index] / 100
+        const { x, y: cy, width: cw, height: ch } = data.cell
+        const barX = x + 4, barY = cy + ch / 2 - 2, barMaxW = cw - 22
+        doc.setFillColor(...SLATE200)
+        doc.roundedRect(barX, barY, barMaxW, 4, 1, 1, 'F')
+        const col = CAT_COLORS[data.row.index % CAT_COLORS.length]
+        doc.setFillColor(...col)
+        doc.roundedRect(barX, barY, Math.max(barMaxW * pct, 1), 4, 1, 1, 'F')
+        doc.setFontSize(6.5)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(...SLATE500)
+        doc.text(`${catPcts[data.row.index].toFixed(0)}%`, barX + barMaxW + 2, cy + ch / 2 + 1.5)
+      }
+    },
+  })
+
+  // ── Member contributions ──
+  y = doc.lastAutoTable.finalY + 9
+  y = sectionHead('Member Contributions', y)
+
+  const memberBody = members.map(m => {
+    const p = mPaid[m.id] || 0
+    const o = mOwes[m.id] || 0
+    const b = p - o
+    return [m.name, `£${p.toFixed(2)}`, `£${o.toFixed(2)}`, `${b >= 0 ? '+' : '-'}£${Math.abs(b).toFixed(2)}`]
+  })
+
+  autoTable(doc, {
+    startY: y,
+    margin: { left: PX, right: PX },
+    head: [['Member', 'Total Paid', 'Share Owed', 'Net Balance']],
+    body: memberBody,
+    styles: { fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 4, right: 4 } },
+    headStyles: { fillColor: SLATE100, textColor: SLATE500, fontStyle: 'bold', fontSize: 7, lineColor: SLATE200, lineWidth: 0.25 },
+    columnStyles: {
+      0: { cellWidth: 70 },
+      1: { cellWidth: 37, halign: 'right' },
+      2: { cellWidth: 37, halign: 'right' },
+      3: { cellWidth: 38, halign: 'right', fontStyle: 'bold' },
+    },
+    alternateRowStyles: { fillColor: SLATE50 },
+    didParseCell: (data) => {
+      if (data.column.index === 3 && data.section === 'body') {
+        const v = String(data.cell.raw || '')
+        data.cell.styles.textColor = v.startsWith('+') ? EMERALD : v.startsWith('-') ? ROSE : SLATE500
+      }
+    },
+  })
+
+  // ── Monthly spending trend ──
+  y = doc.lastAutoTable.finalY + 9
+  if (y + 40 > PH - 14) { doc.addPage(); y = 14 }
+  y = sectionHead('Monthly Spending Trend', y)
+
+  const trendH = 24, barSlot = CW / 6
+  monthlyTrend.forEach(({ label, total: mTotal }, i) => {
+    const bx  = PX + i * barSlot
+    const bw  = barSlot - 4
+    const bh  = mTotal > 0 ? Math.max((mTotal / maxMonth) * trendH, 3) : 0
+    doc.setFillColor(...SLATE100)
+    doc.roundedRect(bx, y, bw, trendH, 2, 2, 'F')
+    if (bh > 0) {
+      doc.setFillColor(...INDIGO)
+      doc.roundedRect(bx, y + trendH - bh, bw, bh, 1.5, 1.5, 'F')
+      doc.setFontSize(6)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...INDIGO)
+      doc.text(`£${mTotal.toFixed(0)}`, bx + bw / 2, y + trendH - bh - 1.5, { align: 'center' })
+    }
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...SLATE500)
+    doc.text(label, bx + bw / 2, y + trendH + 5, { align: 'center' })
+  })
+  y += trendH + 12
+
+  // ── Top 5 Expenses ──
+  if (top5.length > 0) {
+    if (y + 32 > PH - 14) { doc.addPage(); y = 14 }
+    y = sectionHead('Top Expenses', y)
+
+    const t5W = (CW - (top5.length - 1) * 2) / top5.length
+    top5.forEach((exp, i) => {
+      const cat    = exp.category || guessCategory(exp.description)
+      const catIdx = sortedCats.findIndex(([c]) => c === cat)
+      const col    = CAT_COLORS[(catIdx >= 0 ? catIdx : i) % CAT_COLORS.length]
+      const bx     = PX + i * (t5W + 2)
+
+      doc.setFillColor(
+        Math.round(col[0] * 0.12 + 255 * 0.88),
+        Math.round(col[1] * 0.12 + 255 * 0.88),
+        Math.round(col[2] * 0.12 + 255 * 0.88)
+      )
+      doc.setDrawColor(...col)
+      doc.setLineWidth(0.4)
+      doc.roundedRect(bx, y, t5W, 20, 2, 2, 'FD')
+
+      doc.setFillColor(...col)
+      doc.circle(bx + 5, y + 5, 3.5, 'F')
+      doc.setFontSize(6.5)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...WHITE)
+      doc.text(`#${i + 1}`, bx + 5, y + 6.2, { align: 'center' })
+
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...col)
+      doc.text(`£${parseFloat(exp.amount).toFixed(2)}`, bx + t5W / 2, y + 8, { align: 'center' })
+
+      const desc = (exp.description || '').length > 16 ? exp.description.slice(0, 14) + '…' : exp.description
+      doc.setFontSize(6.5)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(30, 30, 50)
+      doc.text(desc, bx + t5W / 2, y + 13, { align: 'center' })
+
+      doc.setFontSize(5.5)
+      doc.setTextColor(...SLATE400)
+      const catLabel = categoryMeta[cat]?.label ?? cat
+      doc.text(`${categoryIcons[cat] ?? ''} ${catLabel}`, bx + t5W / 2, y + 16.5, { align: 'center' })
+      doc.text(`by ${exp.payer_name || ''}`, bx + t5W / 2, y + 19.5, { align: 'center' })
+    })
+    y += 26
+  }
+
+  // ── Full expense table ──
+  if (y + 20 > PH - 14) { doc.addPage(); y = 14 }
+  y = sectionHead('Full Expense Details', y)
+
+  const tableRows = buildCSVRows(active, members).slice(1).map(r => r.slice(0, 6))
+
+  autoTable(doc, {
+    startY: y,
+    margin: { left: PX, right: PX },
+    head: [['Date', 'Description', 'Category', 'Amount', 'Paid By', 'Split Between']],
+    body: tableRows,
+    styles: { fontSize: 7.5, cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 }, overflow: 'linebreak' },
+    headStyles: { fillColor: INDIGO, textColor: WHITE, fontStyle: 'bold', fontSize: 7 },
+    columnStyles: {
+      0: { cellWidth: 22 },
+      1: { cellWidth: 48 },
+      2: { cellWidth: 28 },
+      3: { cellWidth: 22, halign: 'right', fontStyle: 'bold', textColor: INDIGO },
+      4: { cellWidth: 28 },
+      5: { cellWidth: 34 },
+    },
+    alternateRowStyles: { fillColor: SLATE50 },
+    didParseCell: (data) => {
+      if (data.column.index === 3 && data.section === 'body') {
+        data.cell.text = data.cell.text.map(t => t ? `£${t}` : t)
+      }
+    },
+  })
+
+  // ── Footer on every page ──
+  const pages = doc.internal.getNumberOfPages()
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i)
+    doc.setDrawColor(...SLATE200)
+    doc.setLineWidth(0.25)
+    doc.line(PX, PH - 10, W - PX, PH - 10)
+    doc.setFontSize(6.5)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...SLATE400)
+    doc.text('SplitUp · Expense Report', PX, PH - 6)
+    doc.text(`Page ${i} of ${pages}  ·  ${new Date().toLocaleString('en-GB')}`, W - PX, PH - 6, { align: 'right' })
+  }
+
+  const filename = `${groupName.replace(/\s+/g, '_')}_report_${new Date().toISOString().split('T')[0]}.pdf`
+  doc.save(filename)
 }
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
@@ -473,24 +806,32 @@ function Dashboard({ user, onLogout }) {
   const [slowLoad, setSlowLoad] = useState(false)
   const wsRef = useRef(null)
 
-  // WebSocket: real-time push for notifications and new chat messages
+  // WebSocket: real-time push for notifications and group changes
   useEffect(() => {
     let stopped = false
     let retryTimer = null
+    let backoff = 2000 // exponential backoff: 2s → 4s → 8s → … capped at 30s
 
     const connect = () => {
       if (stopped || !getToken()) return
-      let ws;
+      let ws
       try {
         ws = new WebSocket(getWsUrl(user.id))
       } catch (err) {
-        console.error("WebSocket connection failed (likely GitHub Pages mixed content):", err)
+        // Constructor can throw for invalid URL or security policy
+        if (!stopped) retryTimer = setTimeout(() => { backoff = Math.min(backoff * 2, 30000); connect() }, backoff)
         return
       }
       wsRef.current = ws
+
+      ws.onopen = () => {
+        backoff = 2000 // reset on successful connect
+      }
+
       ws.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data)
+          if (data.type === 'ping') return // keepalive — ignore
           if (data.type === 'notification') {
             setNotifications(prev => [data, ...prev])
             setToastNotif(data)
@@ -499,13 +840,15 @@ function Dashboard({ user, onLogout }) {
           } else if (data.type === 'new_message') {
             window.dispatchEvent(new CustomEvent('ws_new_message', { detail: data }))
           } else if (data.type === 'group_refresh') {
-            // Silently refresh global balances and settlements
+            // Refresh everything affected by a group change
             Promise.all([
+              fetchUserGroups(user.id),
               fetchAllUserBalances(user.id),
               fetchPendingSettlements(user.id),
               fetchInitiatedSettlements(user.id),
               fetchAllSettlements(user.id),
-            ]).then(([b, ps, is, as_]) => {
+            ]).then(([g, b, ps, is, as_]) => {
+              setGroups(g)
               setGlobalBalances(b)
               setPendingSettlements(ps)
               setInitiatedSettlements(is)
@@ -515,11 +858,25 @@ function Dashboard({ user, onLogout }) {
           }
         } catch (_) {}
       }
+
+      ws.onerror = () => {} // handled by onclose
+
       ws.onclose = () => {
         if (stopped || !getToken()) return
-        retryTimer = setTimeout(connect, 3000)
+        retryTimer = setTimeout(() => { backoff = Math.min(backoff * 2, 30000); connect() }, backoff)
       }
     }
+
+    // Reconnect + refresh when tab comes back into focus after being hidden
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return
+      const ws = wsRef.current
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        connect()
+      }
+      window.dispatchEvent(new CustomEvent('app_visible'))
+    }
+    document.addEventListener('visibilitychange', onVisibility)
 
     const onAuthExpired = () => { stopped = true; clearTimeout(retryTimer) }
     window.addEventListener('auth_expired', onAuthExpired)
@@ -528,6 +885,7 @@ function Dashboard({ user, onLogout }) {
       stopped = true
       clearTimeout(retryTimer)
       window.removeEventListener('auth_expired', onAuthExpired)
+      document.removeEventListener('visibilitychange', onVisibility)
       wsRef.current?.close()
     }
   }, [user.id])
@@ -565,7 +923,13 @@ function Dashboard({ user, onLogout }) {
     const interval = setInterval(() => {
       fetchNotifications(user.id).then(setNotifications)
     }, 15000)
-    return () => clearInterval(interval)
+    // Refresh when user returns to tab (e.g. after switching apps on mobile)
+    const onVisible = () => loadData()
+    window.addEventListener('app_visible', onVisible)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('app_visible', onVisible)
+    }
   }, [loadData, user.id])
 
   // Auto-logout after 10 minutes of inactivity (mouse/key/touch resets timer)
@@ -606,8 +970,6 @@ function Dashboard({ user, onLogout }) {
       setGroup(g => groups.find(gr => gr.id === g?.id) || g)
     }
   }
-
-  const totalOwed = 0
 
   const tabs = [
     { id: 'groups',   label: 'Groups',   icon: Home },
@@ -938,6 +1300,312 @@ function GroupsTab({ groups, currentUser, onSelectGroup, onGroupCreated }) {
   )
 }
 
+// ── Date Filter Dropdown ──────────────────────────────────────────────────────
+function DateFilterDropdown({ expenses, dateFilter, setDateFilter }) {
+  const [open, setOpen]       = useState(false)
+  const [view, setView]       = useState('main') // 'main' | 'range' | 'single'
+  const [calFrom, setCalFrom] = useState('')
+  const [calTo,   setCalTo]   = useState('')
+  const [hover,   setHover]   = useState(null)
+  const [calYear, setCalYear] = useState(new Date().getFullYear())
+  const [calMonth, setCalMonth] = useState(new Date().getMonth())
+
+  // Local-time ISO: avoids UTC offset shifting the date by one day
+  const toISO = (d) => {
+    const y  = d.getFullYear()
+    const m  = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${dd}`
+  }
+
+  const todayISO = toISO(new Date())
+
+  const yr2 = (y) => `'${String(y).slice(2)}`
+
+  // Sync cal state when modal opens
+  useEffect(() => {
+    if (!open) return
+    setView('main')
+    if (dateFilter?.type === 'range') {
+      setCalFrom(dateFilter.from); setCalTo(dateFilter.to)
+      setCalYear(new Date(dateFilter.from + 'T00:00:00').getFullYear())
+      setCalMonth(new Date(dateFilter.from + 'T00:00:00').getMonth())
+    } else if (dateFilter?.type === 'single') {
+      setCalFrom(dateFilter.date); setCalTo('')
+      setCalYear(new Date(dateFilter.date + 'T00:00:00').getFullYear())
+      setCalMonth(new Date(dateFilter.date + 'T00:00:00').getMonth())
+    } else {
+      setCalFrom(''); setCalTo('')
+      setCalYear(new Date().getFullYear()); setCalMonth(new Date().getMonth())
+    }
+  }, [open])
+
+  // Set of "YYYY-M" keys that have at least one expense
+  const expMonthSet = useMemo(() => {
+    const s = new Set()
+    expenses.forEach(e => {
+      if (!e.date) return
+      const d = new Date(e.date)
+      s.add(`${d.getFullYear()}-${d.getMonth()}`)
+    })
+    return s
+  }, [expenses])
+
+  // Set of "YYYY-MM-DD" ISO dates that have at least one expense
+  const expDateSet = useMemo(() => {
+    const s = new Set()
+    expenses.forEach(e => { if (e.date) s.add(toISO(new Date(e.date))) })
+    return s
+  }, [expenses])
+
+  const [mpYear, setMpYear] = useState(new Date().getFullYear())
+
+  const label = !dateFilter ? 'All time'
+    : dateFilter.type === 'month'  ? dateFilter.key
+    : dateFilter.type === 'single' ? new Date(dateFilter.date + 'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'})
+    : `${new Date(dateFilter.from + 'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${new Date(dateFilter.to + 'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})}`
+
+  // Shared calendar helpers
+  const prevCal = () => calMonth === 0 ? (setCalMonth(11), setCalYear(y=>y-1)) : setCalMonth(m=>m-1)
+  const nextCal = () => calMonth === 11 ? (setCalMonth(0), setCalYear(y=>y+1)) : setCalMonth(m=>m+1)
+
+  const getDays = (yr, mo) => {
+    const startDow = (new Date(yr, mo, 1).getDay() + 6) % 7
+    const total    = new Date(yr, mo+1, 0).getDate()
+    const days = []
+    for (let i = 0; i < startDow; i++) days.push(null)
+    for (let i = 1; i <= total; i++) days.push(new Date(yr, mo, i))
+    return days
+  }
+
+  // Shared calendar grid — used by both single and range views
+  const CalGrid = ({ isSingle }) => {
+    const days = getDays(calYear, calMonth)
+    const lo    = calFrom && calTo ? (calFrom <= calTo ? calFrom : calTo) : calFrom || ''
+    const hi    = calFrom && calTo ? (calFrom <= calTo ? calTo : calFrom) : ''
+    const effHi = isSingle ? '' : (hi || (hover && calFrom && !calTo ? hover : ''))
+
+    const fromLbl = calFrom ? new Date(calFrom+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '—'
+    const toLbl   = calTo   ? new Date(calTo  +'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) : '—'
+
+    const handleDay = (d) => {
+      const iso = toISO(d)
+      if (isSingle) {
+        setDateFilter({ type:'single', date: iso }); setOpen(false); return
+      }
+      if (!calFrom || (calFrom && calTo)) { setCalFrom(iso); setCalTo('') }
+      else if (iso < calFrom) { setCalTo(calFrom); setCalFrom(iso) }
+      else { setCalTo(iso) }
+    }
+
+    return (
+      <>
+        <button onClick={() => setView('main')} className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 mb-3">
+          <ArrowLeft className="h-3.5 w-3.5" /> Back
+        </button>
+
+        {/* From / To chips (range only) */}
+        {!isSingle && (
+          <div className="flex gap-2 mb-4">
+            <div className={`flex-1 text-center py-2 rounded-xl border transition-all ${calFrom && !calTo ? 'border-violet-500 bg-violet-500/10' : 'border-slate-600 bg-slate-700/40'}`}>
+              <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-0.5">From</p>
+              <p className={`text-sm font-semibold ${calFrom ? 'text-violet-300' : 'text-slate-500'}`}>{fromLbl}</p>
+            </div>
+            <div className="flex items-center text-slate-600 px-1">→</div>
+            <div className={`flex-1 text-center py-2 rounded-xl border transition-all ${calFrom && !calTo ? 'border-violet-500/40 bg-violet-500/5' : calTo ? 'border-slate-600 bg-slate-700/40' : 'border-slate-700 bg-slate-800/40'}`}>
+              <p className="text-[9px] text-slate-500 uppercase tracking-wider mb-0.5">To</p>
+              <p className={`text-sm font-semibold ${calTo ? 'text-violet-300' : 'text-slate-500'}`}>{toLbl}</p>
+            </div>
+          </div>
+        )}
+        {isSingle && <p className="text-xs text-slate-400 mb-3">Tap any day to filter to that date</p>}
+
+        {/* Month nav */}
+        <div className="flex items-center justify-between mb-2">
+          <button onClick={prevCal} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 active:scale-95"><ArrowLeft className="h-4 w-4" /></button>
+          <span className="text-sm font-semibold text-slate-100">{MONTH_SHORT[calMonth]} {yr2(calYear)}</span>
+          <button onClick={nextCal} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 active:scale-95"><ChevronRight className="h-4 w-4" /></button>
+        </div>
+
+        <div className="grid grid-cols-7 mb-1">
+          {['Mo','Tu','We','Th','Fr','Sa','Su'].map(h => (
+            <div key={h} className="text-center text-[10px] text-slate-500 font-medium py-1">{h}</div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7">
+          {days.map((d, i) => {
+            if (!d) return <div key={`e${i}`} />
+            const iso        = toISO(d)
+            const isStart    = lo && iso === lo
+            const isEnd      = effHi && iso === effHi
+            const inRange    = lo && effHi && iso > lo && iso < effHi
+            const isToday    = iso === todayISO
+            const hasEnd     = !!(hi || (hover && calFrom && !calTo))
+            const hasExpense = expDateSet.has(iso)
+            return (
+              <div key={iso} className="relative h-9 flex items-center justify-center">
+                {inRange           && <div className="absolute inset-y-1 inset-x-0 bg-violet-500/20" />}
+                {isStart && hasEnd && <div className="absolute inset-y-1 left-1/2 right-0 bg-violet-500/20" />}
+                {isEnd   && lo     && <div className="absolute inset-y-1 right-1/2 left-0 bg-violet-500/20" />}
+                <button onClick={() => { if (hasExpense) handleDay(d) }}
+                  onMouseEnter={() => { if (hasExpense && !isSingle && calFrom && !calTo) setHover(iso) }}
+                  onMouseLeave={() => setHover(null)}
+                  className={`relative z-10 w-8 h-8 rounded-full text-xs font-medium transition-all select-none
+                    ${isStart || isEnd ? 'bg-violet-500 text-white font-bold shadow-md shadow-violet-500/40' : ''}
+                    ${isToday && !isStart && !isEnd && hasExpense ? 'text-violet-400 font-semibold ring-1 ring-violet-500/50' : ''}
+                    ${hasExpense && !isStart && !isEnd ? 'text-slate-200 hover:bg-violet-500/25' : ''}
+                    ${!hasExpense ? 'text-slate-700 cursor-not-allowed' : ''}
+                  `}>
+                  {d.getDate()}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {!isSingle && calFrom && !calTo && (
+          <p className="text-center text-[10px] text-slate-500 mt-2">Tap an end date</p>
+        )}
+
+        {!isSingle && (
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => { setCalFrom(''); setCalTo('') }}
+              className="flex-1 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-medium transition-colors">
+              Clear
+            </button>
+            <button onClick={() => { if (calFrom && calTo) { setDateFilter({ type:'range', from: calFrom, to: calTo }); setOpen(false) } }}
+              disabled={!calFrom || !calTo}
+              className="flex-1 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              Apply
+            </button>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  // Month picker view — year nav + 3×4 month grid
+  const MonthPickerView = () => {
+    const ALL_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    return (
+      <>
+        <button onClick={() => setView('main')} className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 mb-4">
+          <ArrowLeft className="h-3.5 w-3.5" /> Back
+        </button>
+
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={() => setMpYear(y=>y-1)} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 active:scale-95"><ArrowLeft className="h-4 w-4" /></button>
+          <span className="text-base font-bold text-slate-100">{mpYear}</span>
+          <button onClick={() => setMpYear(y=>y+1)} className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 active:scale-95"><ChevronRight className="h-4 w-4" /></button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          {ALL_MONTHS.map((m, idx) => {
+            const key     = `${m} ${mpYear}`
+            const hasData = expMonthSet.has(`${mpYear}-${idx}`)
+            const active  = dateFilter?.type === 'month' && dateFilter.key === key
+            return (
+              <button key={m} onClick={() => { if (hasData) { setDateFilter({ type:'month', key }); setOpen(false) } }}
+                disabled={!hasData}
+                className={`py-2.5 rounded-xl text-sm font-medium transition-all
+                  ${active  ? 'bg-violet-500/30 text-violet-300 border border-violet-500/40' : ''}
+                  ${!active && hasData  ? 'bg-slate-700/60 text-slate-300 hover:bg-slate-700' : ''}
+                  ${!hasData ? 'bg-slate-800/30 text-slate-600 cursor-not-allowed' : ''}
+                `}>
+                {m}
+              </button>
+            )
+          })}
+        </div>
+      </>
+    )
+  }
+
+  const MainView = () => (
+    <>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-slate-100">Filter by date</h3>
+        <button onClick={() => setOpen(false)} className="text-slate-500 hover:text-slate-300"><X className="h-4 w-4" /></button>
+      </div>
+
+      {/* All time */}
+      <button onClick={() => { setDateFilter(null); setOpen(false) }}
+        className={`w-full text-left text-sm px-3 py-2.5 rounded-xl mb-2 font-medium transition-all ${!dateFilter ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30' : 'text-slate-400 bg-slate-700/40 hover:bg-slate-700/70'}`}>
+        📅 All time
+      </button>
+
+      {/* Single date row */}
+      <button onClick={() => {
+          const d = dateFilter?.type === 'single' ? dateFilter.date : ''
+          setCalFrom(d); setCalTo('')
+          if (d) { setCalYear(parseInt(d.split('-')[0])); setCalMonth(parseInt(d.split('-')[1]) - 1) }
+          else    { setCalYear(new Date().getFullYear()); setCalMonth(new Date().getMonth()) }
+          setView('single')
+        }}
+        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border mb-2 transition-all ${dateFilter?.type === 'single' ? 'border-violet-500/40 bg-violet-500/10 text-violet-300' : 'border-slate-600 bg-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}>
+        <span className="text-sm font-medium">{dateFilter?.type === 'single' ? label : 'Single date…'}</span>
+        <Calendar className="h-4 w-4 shrink-0" />
+      </button>
+
+      {/* Month picker row */}
+      <button onClick={() => { setMpYear(dateFilter?.type === 'month' ? parseInt(dateFilter.key.split(' ')[1]) : new Date().getFullYear()); setView('monthpick') }}
+        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border mb-2 transition-all ${dateFilter?.type === 'month' ? 'border-violet-500/40 bg-violet-500/10 text-violet-300' : 'border-slate-600 bg-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}>
+        <span className="text-sm font-medium">{dateFilter?.type === 'month' ? dateFilter.key : 'Pick a month…'}</span>
+        <Calendar className="h-4 w-4 shrink-0" />
+      </button>
+
+      {/* Custom date range row */}
+      <button onClick={() => {
+          const from = dateFilter?.type === 'range' ? dateFilter.from : ''
+          const to   = dateFilter?.type === 'range' ? dateFilter.to   : ''
+          setCalFrom(from); setCalTo(to)
+          if (from) { setCalYear(parseInt(from.split('-')[0])); setCalMonth(parseInt(from.split('-')[1]) - 1) }
+          else       { setCalYear(new Date().getFullYear()); setCalMonth(new Date().getMonth()) }
+          setView('range')
+        }}
+        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all ${dateFilter?.type === 'range' ? 'border-violet-500/40 bg-violet-500/10 text-violet-300' : 'border-slate-600 bg-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-300'}`}>
+        <span className="text-sm font-medium">{dateFilter?.type === 'range' ? label : 'Custom range…'}</span>
+        <Calendar className="h-4 w-4 shrink-0" />
+      </button>
+    </>
+  )
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all whitespace-nowrap shrink-0 ${dateFilter ? 'bg-violet-500/20 border-violet-500/40 text-violet-300' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+        <Calendar className="h-3.5 w-3.5 shrink-0" />
+        {label}
+        {dateFilter && (
+          <span onClick={e => { e.stopPropagation(); setDateFilter(null) }} className="ml-0.5 hover:text-white">
+            <X className="h-3 w-3" />
+          </span>
+        )}
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={() => setOpen(false)}>
+            <motion.div
+              initial={{ scale:0.93, opacity:0 }} animate={{ scale:1, opacity:1 }} exit={{ scale:0.93, opacity:0 }}
+              transition={{ type:'spring', stiffness:320, damping:28 }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-2xl shadow-2xl p-4 max-h-[90vh] overflow-y-auto">
+              {view === 'main'      && <MainView />}
+              {view === 'monthpick' && <MonthPickerView />}
+              {view === 'single'    && <CalGrid isSingle={true} />}
+              {view === 'range'     && <CalGrid isSingle={false} />}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
 // ── Group Detail View ─────────────────────────────────────────────────────────
 function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated, focusExpenseId, initiatedSettlements = [] }) {
   const [expenses, setExpenses] = useState([])
@@ -948,6 +1616,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const [activeSection, setSection] = useState('expenses') // expenses | balances
   const [expSearch, setExpSearch] = useState('')
   const [expCatFilter, setExpCatFilter] = useState(null) // null = all
+  const [expDateFilter, setExpDateFilter] = useState(null) // null | {type:'month',key} | {type:'range',from,to}
   const [showAddExp, setAddExp]  = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [memberSearch, setMemberSearch] = useState('')
@@ -986,6 +1655,47 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   const isGroupAdmin = myRole === 'admin' || myRole === 'super_admin' || !membershipsLoaded
   // For gear/role controls: only true once we have confirmed role data
   const isSuperAdmin = myRole === 'super_admin'
+
+  const filteredExpenses = useMemo(() => {
+    if (!expDateFilter) return expenses
+    return expenses.filter(e => {
+      if (!e.date) return false
+      const d = new Date(e.date)
+      const eISO = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+      if (expDateFilter.type === 'month')  return `${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}` === expDateFilter.key
+      if (expDateFilter.type === 'single') return eISO === expDateFilter.date
+      if (expDateFilter.type === 'range')  return eISO >= expDateFilter.from && eISO <= expDateFilter.to
+      return true
+    })
+  }, [expenses, expDateFilter])
+
+  const periodBalances = useMemo(() => {
+    if (!expDateFilter) return balances
+    const net = {}
+    const nameMap = Object.fromEntries(members.map(m => [m.id, m.name]))
+    filteredExpenses
+      .filter(e => e.status === 'active' || e.status === 'pending_deletion')
+      .forEach(e => {
+        net[e.payer_id] = (net[e.payer_id] || 0) + parseFloat(e.amount)
+        ;(e.splits || []).forEach(s => { net[s.user_id] = (net[s.user_id] || 0) - parseFloat(s.amount) })
+      })
+    const creds = Object.entries(net).filter(([,v]) => v > 0.005).sort((a,b)=>b[1]-a[1]).map(([id,v])=>({id:+id,v}))
+    const debts = Object.entries(net).filter(([,v]) => v < -0.005).sort((a,b)=>a[1]-b[1]).map(([id,v])=>({id:+id,v:Math.abs(v)}))
+    const result = []; let ci = 0, di = 0
+    while (ci < creds.length && di < debts.length) {
+      const s = Math.min(creds[ci].v, debts[di].v)
+      result.push({ from_user_id:debts[di].id, from_user_name:nameMap[debts[di].id]||'?', to_user_id:creds[ci].id, to_user_name:nameMap[creds[ci].id]||'?', amount:Math.round(s*100)/100 })
+      creds[ci].v -= s; debts[di].v -= s
+      if (creds[ci].v < 0.005) ci++
+      if (debts[di].v < 0.005) di++
+    }
+    return result
+  }, [expDateFilter, filteredExpenses, members, balances])
+
+  const dateFilterLabel = !expDateFilter ? 'All time'
+    : expDateFilter.type === 'month'  ? expDateFilter.key
+    : expDateFilter.type === 'single' ? new Date(expDateFilter.date+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})
+    : `${new Date(expDateFilter.from+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – ${new Date(expDateFilter.to+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'})}`
 
   const markChatViewed = useCallback((expId) => {
     setViewedChats(prev => {
@@ -1062,13 +1772,17 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
     return () => window.removeEventListener('ws_new_message', handleWsMsg)
   }, [])
 
-  // Re-fetch group data when any member triggers a balance-affecting action
+  // Re-fetch group data on WS group_refresh and on tab-visible
   useEffect(() => {
     const handleGroupRefresh = (e) => {
       if (e.detail?.group_id === group.id) loadGroupData()
     }
     window.addEventListener('ws_group_refresh', handleGroupRefresh)
-    return () => window.removeEventListener('ws_group_refresh', handleGroupRefresh)
+    window.addEventListener('app_visible', loadGroupData)
+    return () => {
+      window.removeEventListener('ws_group_refresh', handleGroupRefresh)
+      window.removeEventListener('app_visible', loadGroupData)
+    }
   }, [group.id, loadGroupData])
 
   const handleDeleteExpense = async (expenseId) => {
@@ -1486,81 +2200,100 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
         {loading ? (
           <div className="flex justify-center py-12"><Loader2 className="animate-spin h-7 w-7 text-indigo-500" /></div>
-        ) : disabledInGroup && activeSection === 'expenses' ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-4">
-            <div className="h-14 w-14 bg-amber-500/10 rounded-full flex items-center justify-center">
-              <UserX className="h-7 w-7 text-amber-400" />
-            </div>
-            <p className="text-amber-300 font-semibold text-sm">Your access to this group is disabled</p>
-            <p className="text-slate-500 text-xs max-w-xs">An admin has temporarily restricted your access. You won't see any expenses until you're re-enabled.</p>
-          </div>
-        ) : activeSection === 'expenses' ? (
-          <>
-            {/* Search + filter bar */}
-            <div className="mt-3 mb-2 space-y-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
-                <input value={expSearch} onChange={e => setExpSearch(e.target.value)}
-                  placeholder="Search expenses…"
-                  className="w-full bg-slate-800/60 border border-slate-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
-                {expSearch && (
-                  <button onClick={() => setExpSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-              <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-                {(() => {
-                  const usedCats = new Set(expenses.map(e => e.category || guessCategory(e.description)).filter(Boolean))
-                  const visibleCats = [null, ...EXPENSE_CATEGORIES.map(c => c.id).filter(id => usedCats.has(id))]
-                  return visibleCats.map(cid => {
-                    const meta = cid ? categoryMeta[cid] : null
-                    const active = expCatFilter === cid
-                    return (
-                      <button key={cid ?? 'all'} onClick={() => setExpCatFilter(cid)}
-                        className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${active ? (meta ? meta.color : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300') : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
-                        {meta ? `${meta.icon} ${meta.label}` : 'All'}
-                      </button>
-                    )
-                  })
-                })()}
-              </div>
-            </div>
-            {expenses.some(e => e.status === 'deleted') && (
-              <div className="flex justify-end mb-1">
-                <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer hover:text-slate-200 transition-colors">
-                  <input type="checkbox" checked={showValidOnly} onChange={e => setShowValidOnly(e.target.checked)} className="accent-indigo-500" />
-                  Hide deleted expenses
-                </label>
-              </div>
-            )}
-            <ExpenseList
-              expenses={expenses.filter(e => {
-                const term = expSearch.toLowerCase()
-                const matchSearch = !term || e.description.toLowerCase().includes(term)
-                const matchCat = !expCatFilter || (e.category || guessCategory(e.description)) === expCatFilter
-                return matchSearch && matchCat
-              })}
-              chatRefreshKey={chatRefreshKey}
-              currentUser={currentUser}
-              allUsers={allUsers}
-              showValidOnly={showValidOnly}
-              onEditExpense={setEditingExpense}
-              onDeleteExpense={handleDeleteExpense}
-              onApproveDelete={handleApproveDelete}
-              onRejectDelete={handleRejectDelete}
-              viewedChats={viewedChats}
-              focusExpenseId={focusExpenseId}
-              markChatViewed={markChatViewed}
-              initiatedSettlements={initiatedSettlements}
-              onReload={loadGroupData}
-              myRole={myRole}
-            />
-          </>
-        ) : activeSection === 'balances' ? (
-          <BalanceList balances={balances} currentUser={currentUser} members={members} />
         ) : (
-          <InsightsTab expenses={expenses} members={members} group={group} />
+          <>
+            {/* Filter bar — date filter on all tabs, search/category on expenses only */}
+            <div className="mt-3 mb-2">
+              {activeSection === 'expenses' && !disabledInGroup ? (
+                <div className="space-y-2">
+                  <div className="flex gap-2 items-center">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
+                      <input value={expSearch} onChange={e => setExpSearch(e.target.value)}
+                        placeholder="Search expenses…"
+                        className="w-full bg-slate-800/60 border border-slate-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                      {expSearch && (
+                        <button onClick={() => setExpSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <DateFilterDropdown expenses={expenses} dateFilter={expDateFilter} setDateFilter={setExpDateFilter} />
+                  </div>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                    {(() => {
+                      const usedCats = new Set(expenses.map(e => e.category || guessCategory(e.description)).filter(Boolean))
+                      const visibleCats = [null, ...EXPENSE_CATEGORIES.map(c => c.id).filter(id => usedCats.has(id))]
+                      return visibleCats.map(cid => {
+                        const meta = cid ? categoryMeta[cid] : null
+                        const active = expCatFilter === cid
+                        return (
+                          <button key={cid ?? 'all'} onClick={() => setExpCatFilter(cid)}
+                            className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${active ? (meta ? meta.color : 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300') : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                            {meta ? `${meta.icon} ${meta.label}` : 'All'}
+                          </button>
+                        )
+                      })
+                    })()}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-end">
+                  <DateFilterDropdown expenses={expenses} dateFilter={expDateFilter} setDateFilter={setExpDateFilter} />
+                </div>
+              )}
+            </div>
+
+            {disabledInGroup && activeSection === 'expenses' ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-4">
+                <div className="h-14 w-14 bg-amber-500/10 rounded-full flex items-center justify-center">
+                  <UserX className="h-7 w-7 text-amber-400" />
+                </div>
+                <p className="text-amber-300 font-semibold text-sm">Your access to this group is disabled</p>
+                <p className="text-slate-500 text-xs max-w-xs">An admin has temporarily restricted your access. You won't see any expenses until you're re-enabled.</p>
+              </div>
+            ) : activeSection === 'expenses' ? (
+              <>
+                {expenses.some(e => e.status === 'deleted') && (
+                  <div className="flex justify-end mb-1">
+                    <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer hover:text-slate-200 transition-colors">
+                      <input type="checkbox" checked={showValidOnly} onChange={e => setShowValidOnly(e.target.checked)} className="accent-indigo-500" />
+                      Hide deleted expenses
+                    </label>
+                  </div>
+                )}
+                <ExpenseList
+                  expenses={filteredExpenses.filter(e => {
+                    const term = expSearch.toLowerCase()
+                    const matchSearch = !term || e.description.toLowerCase().includes(term)
+                    const matchCat = !expCatFilter || (e.category || guessCategory(e.description)) === expCatFilter
+                    return matchSearch && matchCat
+                  })}
+                  chatRefreshKey={chatRefreshKey}
+                  currentUser={currentUser}
+                  allUsers={allUsers}
+                  showValidOnly={showValidOnly}
+                  onEditExpense={setEditingExpense}
+                  onDeleteExpense={handleDeleteExpense}
+                  onApproveDelete={handleApproveDelete}
+                  onRejectDelete={handleRejectDelete}
+                  viewedChats={viewedChats}
+                  focusExpenseId={focusExpenseId}
+                  markChatViewed={markChatViewed}
+                  initiatedSettlements={initiatedSettlements}
+                  onReload={loadGroupData}
+                  myRole={myRole}
+                />
+              </>
+            ) : activeSection === 'balances' ? (
+              <>
+                {expDateFilter && <p className="text-xs text-amber-400/70 mb-2 mt-1">Period view — settlements excluded</p>}
+                <BalanceList balances={periodBalances} currentUser={currentUser} members={members} />
+              </>
+            ) : (
+              <InsightsTab expenses={filteredExpenses} members={members} group={group} dateLabel={dateFilterLabel} />
+            )}
+          </>
         )}
       </div>
 
@@ -2355,7 +3088,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-1 py-2">{monthYear}</p>
           <div className="space-y-1">
             {exps.map((e, i) => {
-              const { month, day, year } = formatDate(e.date)
+              const { month, day, year, time } = formatDate(e.date)
               const mySplit = e.splits.find(s => s.user_id === currentUser.id)
               const iPaid  = e.payer_id === currentUser.id
               const cat    = e.category || guessCategory(e.description)
@@ -2440,7 +3173,11 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                     <div className="w-9 shrink-0 text-center">
                       <p className="text-[10px] text-slate-500 uppercase leading-tight">{month}</p>
                       <p className="text-base font-bold text-slate-300 leading-tight">{day}</p>
-                      <p className="text-[9px] text-slate-600 leading-tight">{year}</p>
+                      {time ? (
+                        <p className="text-[9px] text-indigo-400/70 leading-tight">{time}</p>
+                      ) : (
+                        <p className="text-[9px] text-slate-600 leading-tight">{year}</p>
+                      )}
                     </div>
                     {/* Icon */}
                     <div className="h-10 w-10 shrink-0 bg-slate-700/60 rounded-xl flex items-center justify-center text-lg">
@@ -2597,7 +3334,8 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
 }
 
 // ── Insights Tab ─────────────────────────────────────────────────────────────
-function InsightsTab({ expenses, members, group }) {
+function InsightsTab({ expenses, members, group, dateLabel = 'All time' }) {
+  const [pdfLoading, setPdfLoading] = useState(false)
   const active = expenses.filter(e => e.status === 'active' || e.status === 'pending_deletion' || e.status === 'approved_for_deletion')
 
   // Category breakdown
@@ -2651,10 +3389,18 @@ function InsightsTab({ expenses, members, group }) {
           <p className="text-2xl font-bold text-white">£{totalSpent.toFixed(2)}</p>
           <p className="text-xs text-slate-500">{active.length} expense{active.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={() => exportGroupToCSV(expenses, group.name, members)}
-          className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-sm text-slate-300 transition-colors">
-          <Download className="h-4 w-4" /> Export CSV
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => exportGroupToCSV(expenses, group.name, members)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-sm text-slate-300 transition-colors">
+            <Download className="h-4 w-4" /> CSV
+          </button>
+          <button onClick={async () => { setPdfLoading(true); try { await exportGroupToPDF(expenses, group.name, members, dateLabel) } finally { setPdfLoading(false) } }}
+            disabled={pdfLoading}
+            className="flex items-center gap-1.5 px-3 py-2 bg-violet-600 hover:bg-violet-500 border border-violet-500/40 rounded-xl text-sm text-white font-medium transition-colors disabled:opacity-60">
+            {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            {pdfLoading ? 'Generating…' : 'PDF'}
+          </button>
+        </div>
       </div>
 
       {/* Monthly spending chart */}
@@ -3586,7 +4332,14 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
         payer_id: payerId,
         created_by_id: initialExpense ? initialExpense.created_by_id : currentUser.id,
         group_id: groupId ? parseInt(groupId) : null,
-        date,
+        // Append current time so same-day expenses sort by entry time, not all midnight
+        date: (() => {
+          const now = new Date()
+          const hh = String(now.getHours()).padStart(2,'0')
+          const mm = String(now.getMinutes()).padStart(2,'0')
+          const ss = String(now.getSeconds()).padStart(2,'0')
+          return `${date}T${hh}:${mm}:${ss}`
+        })(),
         splits: finalSplits,
         receipt_image: receiptImage || null,
         category: category || guessCategory(description.trim()) || null,

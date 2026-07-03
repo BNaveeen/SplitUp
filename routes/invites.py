@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from database import User, Group, PendingInvite, group_members
 from routes.deps import get_db, get_current_user_id
 from schemas import InviteRequest, InviteResponse
+from services.helpers import _push_group_event
 
 router = APIRouter()
 
@@ -97,4 +98,5 @@ def accept_invite(
         group.members.append(user)
     invite.accepted = 1
     db.commit()
+    _push_group_event(db, group.id)
     return {"message": f"Welcome to {group.name}!", "group_id": group.id}

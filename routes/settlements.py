@@ -65,6 +65,8 @@ def create_settlement(
         msg = f"{payer.name} wants to settle all debts (£{req.amount:.2f}) in {group_name}. Please approve it."
 
     _add_notification(db, req.payee_id, msg, group_id=req.group_id)
+    if req.group_id:
+        _push_group_event(db, req.group_id)
 
     return SettlementResponse(
         id=new_settlement.id, payer_id=new_settlement.payer_id, payer_name=payer.name,

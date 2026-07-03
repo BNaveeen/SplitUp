@@ -108,6 +108,7 @@ def add_group_member(
     ))
     db.commit()
     db.refresh(group)
+    _push_group_event(db, group_id)
     return group
 
 
@@ -138,6 +139,7 @@ def add_group_member_by_id(
     ))
     db.commit()
     db.refresh(group)
+    _push_group_event(db, group_id)
     return group
 
 
@@ -296,6 +298,7 @@ def update_member_role(
         (group_members.c.group_id == group_id) & (group_members.c.user_id == user_id)
     ).values(role=req.role))
     db.commit()
+    _push_group_event(db, group_id)
     return {"message": f"Role updated to {req.role}"}
 
 
@@ -330,6 +333,7 @@ def remove_group_member(
         (group_members.c.group_id == group_id) & (group_members.c.user_id == user_id)
     ))
     db.commit()
+    _push_group_event(db, group_id)
     warning = (f"Removed, but this user had {active_splits} active expense split(s) in the group."
                if active_splits > 0 else None)
     return {"message": "Member removed", "warning": warning}
@@ -362,4 +366,5 @@ def toggle_member_active(
         (group_members.c.group_id == group_id) & (group_members.c.user_id == user_id)
     ).values(is_active=new_status))
     db.commit()
+    _push_group_event(db, group_id)
     return {"message": "activated" if new_status else "deactivated", "is_active": new_status}

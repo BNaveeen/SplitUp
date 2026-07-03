@@ -20,9 +20,13 @@ categoryIcons.default = '💳'
 export const categoryMeta = Object.fromEntries(EXPENSE_CATEGORIES.map(c => [c.id, c]))
 
 export function formatDate(isoString) {
-  if (!isoString) return { month: '—', day: '—', year: '—' }
+  if (!isoString) return { month: '—', day: '—', year: '—', time: '' }
   const d = new Date(isoString)
-  return { month: MONTH_SHORT[d.getMonth()], day: String(d.getDate()), year: String(d.getFullYear()) }
+  const h = d.getHours(), m = d.getMinutes()
+  const ampm = h >= 12 ? 'pm' : 'am'
+  const h12 = h % 12 || 12
+  const time = (h === 0 && m === 0) ? '' : `${h12}:${String(m).padStart(2,'0')}${ampm}`
+  return { month: MONTH_SHORT[d.getMonth()], day: String(d.getDate()), year: String(d.getFullYear()), time }
 }
 
 export function formatTimestamp(isoString) {
@@ -81,7 +85,7 @@ export function buildCSVRows(expenses, members = []) {
       const catLabel = categoryMeta[cat]?.label ?? cat
       const splitNames = e.splits.map(s => memberMap[s.user_id] || s.user_name || `User ${s.user_id}`).join('; ')
       rows.push([
-        e.date ? new Date(e.date).toLocaleDateString() : '',
+        e.date ? (() => { const d = new Date(e.date); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` })() : '',
         e.description,
         catLabel,
         parseFloat(e.amount).toFixed(2),
