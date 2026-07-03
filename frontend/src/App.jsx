@@ -2303,7 +2303,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
         {/* Section tabs */}
         <div className="flex gap-1 mt-4 bg-slate-800/50 rounded-xl p-1">
           {[['expenses', 'Expenses', Receipt], ['balances', 'Balances', TrendingDown], ['insights', 'Insights', BarChart2]].map(([id, label, Icon]) => {
-            const locked = id === 'insights' && !hasFeature('insights')
+            const locked = id === 'insights' && !hasFeature('insights_basic')
             return (
               <button key={id} onClick={() => locked ? onUpgradeRequired?.({ feature: 'insights', upgrade_to: 'pro', current_plan: userPlan.plan }) : setSection(id)}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-all ${activeSection === id ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'} ${locked ? 'opacity-50' : ''}`}>

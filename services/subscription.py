@@ -33,15 +33,15 @@ DEFAULT_FLAGS = {
         'max_expenses_per_group': {'enabled': False, 'limit': None},
         'realtime_updates':       {'enabled': True,  'limit': None},
         'csv_export':             {'enabled': True,  'limit': None},
-        'pdf_export':             {'enabled': False, 'limit': None},
+        'pdf_export':             {'enabled': True,  'limit': None},
         'insights_basic':         {'enabled': True,  'limit': None},
         'insights_advanced':      {'enabled': False, 'limit': None},
-        'expense_chat':           {'enabled': False, 'limit': None},
+        'expense_chat':           {'enabled': True,  'limit': None},
         'settle_all':             {'enabled': True,  'limit': None},
         'invite_link':            {'enabled': True,  'limit': None},
         'date_filter':            {'enabled': True,  'limit': None},
         'member_roles':           {'enabled': True,  'limit': None},
-        'member_deactivate':      {'enabled': False, 'limit': None},
+        'member_deactivate':      {'enabled': True,  'limit': None},
         'people_tab':             {'enabled': False, 'limit': None},
         'recurring_expenses':     {'enabled': True,  'limit': None},
         'group_budget':           {'enabled': True,  'limit': None},
@@ -68,9 +68,16 @@ DEFAULT_FLAGS = {
 }
 
 
+_FLAGS_VERSION = 2  # bump to force re-seed on next deploy
+
 def seed_default_flags(db: Session):
-    if db.query(FeatureFlag).count() > 0:
+    existing_count = db.query(FeatureFlag).count()
+    expected_count = sum(len(v) for v in DEFAULT_FLAGS.values())
+    # Re-seed if empty or stale (count mismatch means schema changed)
+    if existing_count == expected_count:
         return
+    # Wipe stale flags and re-seed
+    db.query(FeatureFlag).delete()
     for plan, features in DEFAULT_FLAGS.items():
         for key, val in features.items():
             db.add(FeatureFlag(
@@ -120,7 +127,12 @@ def get_all_features(db: Session, user_id: int) -> dict:
     features = {}
     for key in all_keys:
         enabled, limit = _get_flag(db, plan, key)
-        features[key] = {'enabled': enabled, 'limit': limit}
+        if key.startswith('max_'):
+            # Limit key: return the cap value (None = unlimited, int = capped)
+            features[key] = limit if enabled else None
+        else:
+            # Boolean feature: return plain bool
+            features[key] = enabled
     return {'plan': plan, 'features': features}
 
 
@@ -129,9 +141,9 @@ def get_all_flags_by_plan(db: Session) -> dict:
     for plan in PLANS:
         flags = db.query(FeatureFlag).filter(FeatureFlag.plan == plan).all()
         if flags:
-            result[plan] = {f.feature_key: {'enabled': bool(f.enabled), 'limit': f.limit_value} for f in flags}
+            result[plan] = {f.feature_key: {'enabled': bool(f.enabled), 'limit_value': f.limit_value} for f in flags}
         else:
-            result[plan] = {k: {'enabled': v['enabled'], 'limit': v['limit']} for k, v in DEFAULT_FLAGS[plan].items()}
+            result[plan] = {k: {'enabled': v['enabled'], 'limit_value': v['limit']} for k, v in DEFAULT_FLAGS[plan].items()}
     return result
 
 
