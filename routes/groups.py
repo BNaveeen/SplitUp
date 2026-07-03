@@ -7,6 +7,7 @@ from database import User, Group, Expense, ExpenseSplit, Settlement, group_membe
 from routes.deps import get_db, get_current_user_id
 from services.helpers import _push_group_event, _format_expense, _EXPENSE_LOAD_OPTIONS
 from services.cache import get_cached_balances, set_cached_balances
+from services.subscription import require_under_limit, require_feature, check_feature
 from schemas import (
     GroupCreate, GroupDetailResponse, GroupRenameRequest,
     AddMemberRequest, AddMemberByIdRequest, MembershipResponse, UpdateRoleRequest,
@@ -27,6 +28,9 @@ def create_group(
     creator = db.query(User).filter(User.id == group.creator_id).first()
     if not creator:
         raise HTTPException(status_code=404, detail="Creator user not found")
+    # Enforce max_groups limit for creator
+    creator_group_count = len(creator.groups)
+    require_under_limit(db, current_user_id, 'max_groups', creator_group_count, upgrade_to='pro')
     new_group = Group(name=group.name)
     db.add(new_group)
     db.flush()
@@ -103,6 +107,7 @@ def add_group_member(
         raise HTTPException(status_code=404, detail=f"No user found with email '{req.email}'")
     if user in group.members:
         raise HTTPException(status_code=400, detail="User is already a member of this group")
+    require_under_limit(db, current_user_id, 'max_members_per_group', len(group.members), upgrade_to='pro')
     db.execute(group_members.insert().values(
         user_id=user.id, group_id=group.id, role="member", is_active=True
     ))
@@ -134,6 +139,7 @@ def add_group_member_by_id(
         raise HTTPException(status_code=404, detail="User not found")
     if user in group.members:
         raise HTTPException(status_code=400, detail="User is already a member of this group")
+    require_under_limit(db, current_user_id, 'max_members_per_group', len(group.members), upgrade_to='pro')
     db.execute(group_members.insert().values(
         user_id=user.id, group_id=group.id, role="member", is_active=True
     ))
@@ -294,6 +300,7 @@ def update_member_role(
         raise HTTPException(status_code=403, detail="Admin privileges required")
     if req.role in ("super_admin", "admin") and admin_row.role != "super_admin":
         raise HTTPException(status_code=403, detail="Only super admin can promote members")
+    require_feature(db, current_user_id, 'member_roles', upgrade_to='pro')
     db.execute(group_members.update().where(
         (group_members.c.group_id == group_id) & (group_members.c.user_id == user_id)
     ).values(role=req.role))
@@ -361,6 +368,7 @@ def toggle_member_active(
         raise HTTPException(status_code=404, detail="Member not found in group")
     if target_row.role == "super_admin":
         raise HTTPException(status_code=403, detail="Cannot deactivate the group super admin")
+    require_feature(db, current_user_id, 'member_deactivate', upgrade_to='business')
     new_status = not bool(target_row.is_active)
     db.execute(group_members.update().where(
         (group_members.c.group_id == group_id) & (group_members.c.user_id == user_id)

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, Expense, ExpenseSplit, ExpenseMessage, Settlement, Notification, SQLALCHEMY_DATABASE_URL
 from routes.deps import limiter, get_db
 from routes import auth, users, groups, expenses, settlements, admin, invites, websocket_routes
+from routes import subscriptions as subscriptions_router
 from services.realtime import manager, set_event_loop
 from services.helpers import _add_system_message, _push_group_event
 
@@ -52,6 +53,7 @@ app.include_router(settlements.router)
 app.include_router(admin.router)
 app.include_router(invites.router)
 app.include_router(websocket_routes.router)
+app.include_router(subscriptions_router.router)
 
 
 @app.get("/health")
@@ -198,3 +200,12 @@ async def startup_event():
         db.rollback()
     finally:
         db.close()
+    # Seed subscription feature flags if not present
+    seed_db = SessionLocal()
+    try:
+        from services.subscription import seed_default_flags as _seed
+        _seed(seed_db)
+    except Exception:
+        pass
+    finally:
+        seed_db.close()

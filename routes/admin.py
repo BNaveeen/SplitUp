@@ -223,3 +223,96 @@ def admin_list_notifications(
         }
         for n in q.order_by(Notification.created_at.desc()).limit(500).all()
     ]
+
+
+# ── Subscription management ────────────────────────────────────────────────────
+
+from database import Subscription as SubscriptionModel, FeatureFlag as FeatureFlagModel
+from services.subscription import get_user_plan, get_all_flags_by_plan, seed_default_flags, PLANS, DEFAULT_FLAGS
+from schemas import PlanUpdateRequest, FeatureFlagUpdateRequest
+
+
+@router.get("/admin/subscriptions")
+def admin_get_subscriptions(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    users = db.query(User).all()
+    result = []
+    for u in users:
+        sub = db.query(SubscriptionModel).filter(
+            SubscriptionModel.user_id == u.id,
+            SubscriptionModel.is_active == True
+        ).first()
+        result.append({
+            "user_id": u.id,
+            "user_name": u.name,
+            "user_email": u.email,
+            "plan": sub.plan if sub else "free",
+            "started_at": sub.started_at.isoformat() if sub else None,
+            "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
+        })
+    return result
+
+
+@router.put("/admin/users/{user_id}/plan")
+def admin_set_plan(
+    user_id: int,
+    req: PlanUpdateRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    if req.plan not in PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan. Must be one of: {PLANS}")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    sub = db.query(SubscriptionModel).filter(SubscriptionModel.user_id == user_id).first()
+    if sub:
+        sub.plan = req.plan
+        sub.is_active = True
+    else:
+        sub = SubscriptionModel(user_id=user_id, plan=req.plan, is_active=True)
+        db.add(sub)
+    db.commit()
+    return {"user_id": user_id, "plan": req.plan, "message": f"Plan updated to {req.plan}"}
+
+
+@router.get("/admin/feature-flags")
+def admin_get_feature_flags(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    seed_default_flags(db)
+    return get_all_flags_by_plan(db)
+
+
+@router.put("/admin/feature-flags/{plan}/{feature_key}")
+def admin_update_feature_flag(
+    plan: str,
+    feature_key: str,
+    req: FeatureFlagUpdateRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    if plan not in PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {plan}")
+    flag = db.query(FeatureFlagModel).filter(
+        FeatureFlagModel.plan == plan,
+        FeatureFlagModel.feature_key == feature_key,
+    ).first()
+    if flag:
+        flag.enabled = req.enabled
+        flag.limit_value = req.limit_value
+    else:
+        flag = FeatureFlagModel(
+            plan=plan, feature_key=feature_key,
+            enabled=req.enabled, limit_value=req.limit_value,
+        )
+        db.add(flag)
+    db.commit()
+    return {"plan": plan, "feature_key": feature_key, "enabled": req.enabled, "limit_value": req.limit_value}

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from database import User, Group, Expense, ExpenseSplit, Settlement
 from routes.deps import get_db, get_current_user_id
 from services.helpers import _add_notification, _add_system_message, _push_group_event
+from services.subscription import require_feature
 from schemas import SettlementCreate, SettlementResponse
 
 router = APIRouter()
@@ -21,6 +22,10 @@ def create_settlement(
     payee = db.query(User).filter(User.id == req.payee_id).first()
     if not payer or not payee:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Group-level "Settle All" requires pro+
+    if not req.expense_id and req.group_id:
+        require_feature(db, current_user_id, 'settle_all', upgrade_to='pro')
 
     if req.expense_id:
         # Expense-level: prevent duplicate pending settlement for same expense

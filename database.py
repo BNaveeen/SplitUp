@@ -197,5 +197,42 @@ class PasswordReset(Base):
     used = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    plan       = Column(String(20), default="free")   # 'free' | 'pro' | 'business'
+    started_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+    is_active  = Column(Boolean, default=True)
+
+    user = relationship("User")
+
+
+class FeatureFlag(Base):
+    __tablename__ = "feature_flags"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    plan          = Column(String(20), nullable=False)
+    feature_key   = Column(String(60), nullable=False)
+    enabled       = Column(Boolean, default=True)
+    limit_value   = Column(Integer, nullable=True)   # None / 0 = unlimited; positive = cap
+
+
+class GroupBudget(Base):
+    __tablename__ = "group_budgets"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    group_id       = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), unique=True, index=True)
+    amount         = Column(Numeric(10, 2))
+    period         = Column(String(20), default="monthly")   # 'monthly' | 'yearly' | 'total'
+    created_by_id  = Column(Integer, ForeignKey("users.id"), index=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+    group      = relationship("Group")
+    created_by = relationship("User")
+
+
 # Create tables
 Base.metadata.create_all(bind=engine)

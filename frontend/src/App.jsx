@@ -19,7 +19,9 @@ import {
   fetchAdminStats, fetchAdminGroups, fetchAdminExpenses, fetchAdminSettlements, fetchAdminNotifications, adminWipeTransactions,
   searchUsers, fetchGroupMemberships, addGroupMemberById, setGroupMemberRole, removeGroupMember, toggleGroupMemberActive,
   renameGroup, setToken, clearToken, getToken,
-  verifyEmail, resendVerification, forgotPassword, resetPassword, changePassword
+  verifyEmail, resendVerification, forgotPassword, resetPassword, changePassword,
+  fetchSubscription, fetchPlans, fetchGroupBudget, setGroupBudget, deleteGroupBudget,
+  adminGetSubscriptions, adminSetUserPlan, adminGetFeatureFlags, adminUpdateFeatureFlag,
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -784,6 +786,72 @@ function ResetPasswordView({ email, onReset, onBack }) {
   )
 }
 
+// ── Plan constants ─────────────────────────────────────────────────────────────
+const PLAN_LABEL = { free: 'Free', pro: 'Pro', business: 'Business' }
+const PLAN_COLOR = {
+  free:     'text-slate-400 bg-slate-800 border-slate-700',
+  pro:      'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
+  business: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
+}
+const PLAN_FEATURES = {
+  free:     ['Up to 3 groups', 'Up to 10 members/group', 'Up to 50 expenses/group', 'Basic expense splitting'],
+  pro:      ['Unlimited groups', 'Unlimited members', 'Unlimited expenses', 'CSV & PDF export', 'Invite links', 'Settle All', 'Expense insights', 'Date filtering', 'Expense chat', 'Member roles', 'Member deactivate', 'Recurring expenses'],
+  business: ['Everything in Pro', 'Group budgets', 'People tab', 'Priority support'],
+}
+const PLAN_PRICE = { free: '£0/mo', pro: '£4.99/mo', business: '£14.99/mo' }
+
+// ── UpgradeModal ───────────────────────────────────────────────────────────────
+function UpgradeModal({ detail, onClose }) {
+  const { upgrade_to = 'pro', current_plan = 'free', feature } = detail || {}
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-slate-900 border border-slate-700/60 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-white/10 rounded-xl"><Zap className="h-6 w-6 text-white" /></div>
+            <div>
+              <h2 className="text-lg font-bold text-white">Upgrade to {PLAN_LABEL[upgrade_to]}</h2>
+              <p className="text-sm text-indigo-200">Unlock more features</p>
+            </div>
+          </div>
+        </div>
+        <div className="p-6">
+          {feature && (
+            <div className="mb-4 px-3 py-2 bg-slate-800 rounded-lg border border-slate-700/50">
+              <p className="text-sm text-slate-300">
+                <span className="font-medium text-slate-100">"{feature.replace(/_/g, ' ')}"</span> requires{' '}
+                <span className={`font-bold ${upgrade_to === 'business' ? 'text-amber-400' : 'text-indigo-400'}`}>{PLAN_LABEL[upgrade_to]}</span>.
+              </p>
+            </div>
+          )}
+          <div className="space-y-2 mb-5">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{PLAN_LABEL[upgrade_to]} includes</p>
+            {PLAN_FEATURES[upgrade_to].map(f => (
+              <div key={f} className="flex items-center gap-2 text-sm text-slate-300">
+                <Check className="h-4 w-4 text-emerald-400 shrink-0" /> {f}
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between p-3 bg-slate-800 rounded-xl mb-4 border border-slate-700/50">
+            <div>
+              <p className="text-sm font-semibold text-white">{PLAN_LABEL[upgrade_to]} Plan</p>
+              <p className="text-xs text-slate-400">Billed monthly</p>
+            </div>
+            <span className="text-xl font-bold text-indigo-400">{PLAN_PRICE[upgrade_to]}</span>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="flex-1 py-2.5 text-sm font-medium text-slate-400 bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors">Maybe later</button>
+            <button onClick={onClose} className="flex-1 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 rounded-xl transition-all">Contact Admin</button>
+          </div>
+          <p className="mt-3 text-center text-[11px] text-slate-500">Contact your admin to upgrade your plan.</p>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({ user, onLogout }) {
   const [activeTab, setActiveTab]   = useState('groups')
@@ -805,6 +873,11 @@ function Dashboard({ user, onLogout }) {
   const [showPendingSettlements, setShowPendingSettlements] = useState(false)
   const [slowLoad, setSlowLoad] = useState(false)
   const wsRef = useRef(null)
+  const [userPlan, setUserPlan] = useState({ plan: 'free', features: {} })
+  const [upgradeModal, setUpgradeModal] = useState(null) // { feature, upgrade_to, current_plan }
+
+  const hasFeature = (key) => userPlan.features?.[key] === true
+  const getLimit = (key) => userPlan.features?.[key] ?? null // null = unlimited
 
   // WebSocket: real-time push for notifications and group changes
   useEffect(() => {
@@ -879,12 +952,15 @@ function Dashboard({ user, onLogout }) {
     document.addEventListener('visibilitychange', onVisibility)
 
     const onAuthExpired = () => { stopped = true; clearTimeout(retryTimer) }
+    const onUpgradeRequired = (e) => setUpgradeModal(e.detail)
     window.addEventListener('auth_expired', onAuthExpired)
+    window.addEventListener('upgrade_required', onUpgradeRequired)
     connect()
     return () => {
       stopped = true
       clearTimeout(retryTimer)
       window.removeEventListener('auth_expired', onAuthExpired)
+      window.removeEventListener('upgrade_required', onUpgradeRequired)
       document.removeEventListener('visibilitychange', onVisibility)
       wsRef.current?.close()
     }
@@ -895,7 +971,7 @@ function Dashboard({ user, onLogout }) {
     // Show "waking up" message if server takes >5s (Render cold start)
     const slowTimer = setTimeout(() => setSlowLoad(true), 5000)
     try {
-      const [g, u, n, b, ps, is, as_] = await Promise.all([
+      const [g, u, n, b, ps, is, as_, sub] = await Promise.all([
         fetchUserGroups(user.id),
         fetchUsers(),
         fetchNotifications(user.id),
@@ -903,6 +979,7 @@ function Dashboard({ user, onLogout }) {
         fetchPendingSettlements(user.id),
         fetchInitiatedSettlements(user.id),
         fetchAllSettlements(user.id),
+        fetchSubscription(),
       ])
       setGroups(g)
       setUsers(u)
@@ -911,6 +988,7 @@ function Dashboard({ user, onLogout }) {
       setPendingSettlements(ps)
       setInitiatedSettlements(is)
       setAllSettlements(as_)
+      if (sub) setUserPlan(sub)
     } finally {
       clearTimeout(slowTimer)
       setSlowLoad(false)
@@ -1092,6 +1170,11 @@ function Dashboard({ user, onLogout }) {
                 </>
               )}
             </div>
+            {userPlan.plan !== 'free' && (
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${PLAN_COLOR[userPlan.plan]}`}>
+                {PLAN_LABEL[userPlan.plan]}
+              </span>
+            )}
             <button onClick={() => { setShowProfile(true); setShowNotifs(false) }} className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-xs font-bold text-white hover:ring-2 hover:ring-indigo-400 transition-all focus:outline-none`}>
               {user.name.charAt(0).toUpperCase()}
             </button>
@@ -1122,6 +1205,11 @@ function Dashboard({ user, onLogout }) {
             }}
           />
         )}
+      </AnimatePresence>
+
+      {/* Upgrade Modal */}
+      <AnimatePresence>
+        {upgradeModal && <UpgradeModal detail={upgradeModal} onClose={() => setUpgradeModal(null)} />}
       </AnimatePresence>
 
       {/* Floating Toast Notification */}
@@ -1159,6 +1247,10 @@ function Dashboard({ user, onLogout }) {
             onGroupUpdated={loadData}
             focusExpenseId={focusExpenseId}
             initiatedSettlements={initiatedSettlements}
+            userPlan={userPlan}
+            hasFeature={hasFeature}
+            getLimit={getLimit}
+            onUpgradeRequired={setUpgradeModal}
           />
         </ErrorBoundary>
       ) : (
@@ -1178,13 +1270,20 @@ function Dashboard({ user, onLogout }) {
               <AnimatePresence mode="wait">
                 <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
                   {activeTab === 'groups' && (
-                    <GroupsTab groups={groups} currentUser={user} onSelectGroup={setGroup} onGroupCreated={loadData} />
+                    <GroupsTab groups={groups} currentUser={user} onSelectGroup={setGroup} onGroupCreated={loadData} hasFeature={hasFeature} getLimit={getLimit} onUpgradeRequired={setUpgradeModal} userPlan={userPlan} />
                   )}
                   {activeTab === 'activity' && (
-                    <ActivityTab currentUser={user} groups={groups} />
+                    <ActivityTab currentUser={user} groups={groups} hasFeature={hasFeature} onUpgradeRequired={setUpgradeModal} />
                   )}
                   {activeTab === 'people' && (
-                    <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} pendingSettlements={pendingSettlements} allSettlements={allSettlements} onSettle={loadData} />
+                    hasFeature('people_tab') || userPlan.plan === 'business'
+                      ? <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} pendingSettlements={pendingSettlements} allSettlements={allSettlements} onSettle={loadData} />
+                      : <div className="flex flex-col items-center justify-center py-24 text-center">
+                          <Users className="h-12 w-12 text-slate-700 mb-4" />
+                          <p className="font-semibold text-slate-300">People tab requires Business</p>
+                          <p className="text-sm text-slate-500 mt-1 mb-4">See all contacts, global balances, and settle with anyone.</p>
+                          <button onClick={() => setUpgradeModal({ feature: 'people_tab', upgrade_to: 'business', current_plan: userPlan.plan })} className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl hover:opacity-90 transition-opacity">Upgrade to Business</button>
+                        </div>
                   )}
                 </motion.div>
               </AnimatePresence>
@@ -1218,6 +1317,8 @@ function Dashboard({ user, onLogout }) {
                 groups={groups}
                 onClose={() => setAddExp(false)}
                 onSuccess={handleExpenseAdded}
+                hasFeature={hasFeature}
+                onUpgradeRequired={setUpgradeModal}
               />
             )}
           </AnimatePresence>
@@ -1228,10 +1329,13 @@ function Dashboard({ user, onLogout }) {
 }
 
 // ── Groups Tab ────────────────────────────────────────────────────────────────
-function GroupsTab({ groups, currentUser, onSelectGroup, onGroupCreated }) {
+function GroupsTab({ groups, currentUser, onSelectGroup, onGroupCreated, hasFeature, getLimit, onUpgradeRequired, userPlan }) {
   const [newName, setNewName] = useState('')
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
+
+  const maxGroups = getLimit ? getLimit('max_groups') : null
+  const atLimit = maxGroups !== null && groups.length >= maxGroups
 
   const handleCreate = async (e) => {
     e.preventDefault()
@@ -1241,16 +1345,24 @@ function GroupsTab({ groups, currentUser, onSelectGroup, onGroupCreated }) {
       await createGroup(newName.trim(), currentUser.id)
       setNewName(''); setShowForm(false)
       onGroupCreated()
-    } catch (err) { alert(err.message) }
+    } catch (err) {
+      if (!err.upgrade_to) alert(err.message)
+    }
     finally { setLoading(false) }
   }
 
   return (
     <div className="space-y-4 pt-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-white">My Groups</h2>
-        <button onClick={() => setShowForm(s => !s)}
-          className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg transition-all">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-white">My Groups</h2>
+          {maxGroups !== null && <span className="text-xs text-slate-500">{groups.length}/{maxGroups}</span>}
+        </div>
+        <button onClick={() => {
+          if (atLimit) { onUpgradeRequired?.({ feature: 'max_groups', upgrade_to: 'pro', current_plan: userPlan?.plan }); return }
+          setShowForm(s => !s)
+        }}
+          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-all ${atLimit ? 'text-slate-500 bg-slate-800 cursor-default' : 'text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20'}`}>
           <Plus className="h-4 w-4" /> New Group
         </button>
       </div>
@@ -1607,7 +1719,7 @@ function DateFilterDropdown({ expenses, dateFilter, setDateFilter }) {
 }
 
 // ── Group Detail View ─────────────────────────────────────────────────────────
-function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated, focusExpenseId, initiatedSettlements = [] }) {
+function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGroupUpdated, focusExpenseId, initiatedSettlements = [], userPlan = { plan: 'free', features: {} }, hasFeature = () => false, getLimit = () => null, onUpgradeRequired }) {
   const [expenses, setExpenses] = useState([])
   const [balances, setBalances] = useState([])
   const [members, setMembers]   = useState(group.members || [])
@@ -2190,12 +2302,15 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
 
         {/* Section tabs */}
         <div className="flex gap-1 mt-4 bg-slate-800/50 rounded-xl p-1">
-          {[['expenses', 'Expenses', Receipt], ['balances', 'Balances', TrendingDown], ['insights', 'Insights', BarChart2]].map(([id, label, Icon]) => (
-            <button key={id} onClick={() => setSection(id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-all ${activeSection === id ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
-              <Icon className="h-4 w-4" />{label}
-            </button>
-          ))}
+          {[['expenses', 'Expenses', Receipt], ['balances', 'Balances', TrendingDown], ['insights', 'Insights', BarChart2]].map(([id, label, Icon]) => {
+            const locked = id === 'insights' && !hasFeature('insights')
+            return (
+              <button key={id} onClick={() => locked ? onUpgradeRequired?.({ feature: 'insights', upgrade_to: 'pro', current_plan: userPlan.plan }) : setSection(id)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-all ${activeSection === id ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-slate-200'} ${locked ? 'opacity-50' : ''}`}>
+                <Icon className="h-4 w-4" />{label}{locked && <Zap className="h-3 w-3 text-indigo-400" />}
+              </button>
+            )
+          })}
         </div>
 
         {loading ? (
@@ -2218,7 +2333,13 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                         </button>
                       )}
                     </div>
-                    <DateFilterDropdown expenses={expenses} dateFilter={expDateFilter} setDateFilter={setExpDateFilter} />
+                    {hasFeature('date_filter')
+                      ? <DateFilterDropdown expenses={expenses} dateFilter={expDateFilter} setDateFilter={setExpDateFilter} />
+                      : <button onClick={() => onUpgradeRequired?.({ feature: 'date_filter', upgrade_to: 'pro', current_plan: userPlan.plan })}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-sm text-slate-500 opacity-70">
+                          <Calendar className="h-4 w-4" /> Filter <Zap className="h-3 w-3 text-indigo-400" />
+                        </button>
+                    }
                   </div>
                   <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
                     {(() => {
@@ -2239,7 +2360,13 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                 </div>
               ) : (
                 <div className="flex justify-end">
-                  <DateFilterDropdown expenses={expenses} dateFilter={expDateFilter} setDateFilter={setExpDateFilter} />
+                  {hasFeature('date_filter')
+                    ? <DateFilterDropdown expenses={expenses} dateFilter={expDateFilter} setDateFilter={setExpDateFilter} />
+                    : <button onClick={() => onUpgradeRequired?.({ feature: 'date_filter', upgrade_to: 'pro', current_plan: userPlan.plan })}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-sm text-slate-500 opacity-70">
+                        <Calendar className="h-4 w-4" /> Filter <Zap className="h-3 w-3 text-indigo-400" />
+                      </button>
+                  }
                 </div>
               )}
             </div>
@@ -2315,6 +2442,8 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
             initialExpense={editingExpense}
             onClose={() => { setAddExp(false); setEditingExpense(null); }}
             onSuccess={async () => { setAddExp(false); setEditingExpense(null); await loadGroupData() }}
+            hasFeature={hasFeature}
+            onUpgradeRequired={onUpgradeRequired}
           />
         )}
       </AnimatePresence>
@@ -2347,14 +2476,18 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [wipeInput, setWipeInput]           = useState('')
   const [wipeLoading, setWipeLoading]       = useState(false)
   const [wipeError, setWipeError]           = useState('')
+  const [subUsers, setSubUsers]             = useState([])
+  const [featureFlags, setFeatureFlags]     = useState({})
+  const [planUpdating, setPlanUpdating]     = useState(null)
 
   const TABS = [
-    { id: 'overview',      label: 'Overview',      icon: LayoutGrid },
-    { id: 'users',         label: 'Users',          icon: Users },
-    { id: 'groups',        label: 'Groups',         icon: Home },
-    { id: 'expenses',      label: 'Expenses',       icon: Receipt },
-    { id: 'settlements',   label: 'Settlements',    icon: CheckCircle2 },
-    { id: 'notifications', label: 'Notifications',  icon: Bell },
+    { id: 'overview',       label: 'Overview',       icon: LayoutGrid },
+    { id: 'users',          label: 'Users',           icon: Users },
+    { id: 'groups',         label: 'Groups',          icon: Home },
+    { id: 'expenses',       label: 'Expenses',        icon: Receipt },
+    { id: 'settlements',    label: 'Settlements',     icon: CheckCircle2 },
+    { id: 'notifications',  label: 'Notifications',   icon: Bell },
+    { id: 'subscriptions',  label: 'Subscriptions',   icon: CreditCard },
   ]
 
   const loadTab = useCallback(async (tab) => {
@@ -2373,6 +2506,9 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
         setAdminSettlements(await fetchAdminSettlements())
       } else if (tab === 'notifications') {
         setAdminNotifs(await fetchAdminNotifications(notifUser?.id || null))
+      } else if (tab === 'subscriptions') {
+        const [su, ff] = await Promise.all([adminGetSubscriptions(), adminGetFeatureFlags()])
+        setSubUsers(su); setFeatureFlags(ff)
       }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
@@ -2831,6 +2967,103 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                   ))}
                 </div>
               )}
+            </div>
+
+          ) : activeTab === 'subscriptions' ? (
+            <div className="space-y-6">
+              {/* Users & Plans */}
+              <div>
+                <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><Users className="h-4 w-4 text-amber-400" /> User Plans</h3>
+                <div className="space-y-2">
+                  {subUsers.map(u => (
+                    <div key={u.id} className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-xl px-4 py-3">
+                      <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+                        {u.name.charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-100 truncate">{u.name}</p>
+                        <p className="text-[10px] text-slate-500 truncate">{u.email}</p>
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${PLAN_COLOR[u.plan] || PLAN_COLOR.free}`}>
+                        {PLAN_LABEL[u.plan] || u.plan}
+                      </span>
+                      <select
+                        value={u.plan}
+                        onChange={async (e) => {
+                          setPlanUpdating(u.id)
+                          try {
+                            await adminSetUserPlan(u.id, e.target.value)
+                            setSubUsers(p => p.map(x => x.id === u.id ? { ...x, plan: e.target.value } : x))
+                          } catch (err) { alert(err.message) }
+                          finally { setPlanUpdating(null) }
+                        }}
+                        disabled={planUpdating === u.id}
+                        className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-amber-500 disabled:opacity-50">
+                        {['free', 'pro', 'business'].map(p => <option key={p} value={p}>{PLAN_LABEL[p]}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                  {subUsers.length === 0 && <p className="text-sm text-slate-500 text-center py-8">No users found</p>}
+                </div>
+              </div>
+
+              {/* Feature Flags grid */}
+              <div>
+                <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><Zap className="h-4 w-4 text-amber-400" /> Feature Flags</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-700/50">
+                        <th className="text-left pb-2 pr-4 text-slate-400 font-semibold">Feature</th>
+                        {['free', 'pro', 'business'].map(p => (
+                          <th key={p} className={`text-center pb-2 px-3 font-bold ${p === 'business' ? 'text-amber-400' : p === 'pro' ? 'text-indigo-400' : 'text-slate-400'}`}>{PLAN_LABEL[p]}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.keys(featureFlags.free || {}).map(fk => (
+                        <tr key={fk} className="border-b border-slate-700/20 hover:bg-slate-800/30">
+                          <td className="py-2 pr-4 text-slate-300 whitespace-nowrap">{fk.replace(/_/g, ' ')}</td>
+                          {['free', 'pro', 'business'].map(plan => {
+                            const flag = featureFlags[plan]?.[fk]
+                            const isLimit = typeof flag?.limit_value === 'number'
+                            return (
+                              <td key={plan} className="py-2 px-3 text-center">
+                                {isLimit ? (
+                                  <input
+                                    type="number" min="0"
+                                    defaultValue={flag.limit_value}
+                                    className="w-16 bg-slate-700 border border-slate-600 rounded-lg px-2 py-0.5 text-center text-slate-200 focus:outline-none focus:border-amber-500"
+                                    onBlur={async (e) => {
+                                      const v = parseInt(e.target.value)
+                                      if (isNaN(v)) return
+                                      try { await adminUpdateFeatureFlag(plan, fk, true, v); setFeatureFlags(p => ({ ...p, [plan]: { ...p[plan], [fk]: { ...p[plan][fk], limit_value: v } } })) }
+                                      catch (err) { alert(err.message) }
+                                    }}
+                                  />
+                                ) : (
+                                  <button
+                                    onClick={async () => {
+                                      const cur = flag?.enabled
+                                      try { await adminUpdateFeatureFlag(plan, fk, !cur); setFeatureFlags(p => ({ ...p, [plan]: { ...p[plan], [fk]: { ...p[plan][fk], enabled: !cur } } })) }
+                                      catch (err) { alert(err.message) }
+                                    }}
+                                    className={`h-5 w-9 rounded-full transition-colors ${flag?.enabled ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+                                    <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform mx-0.5 ${flag?.enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                                  </button>
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {Object.keys(featureFlags.free || {}).length === 0 && (
+                    <p className="text-sm text-slate-500 text-center py-8">No feature flags found. Backend may not have seeded defaults yet.</p>
+                  )}
+                </div>
+              </div>
             </div>
 
           ) : null
@@ -3390,15 +3623,18 @@ function InsightsTab({ expenses, members, group, dateLabel = 'All time' }) {
           <p className="text-xs text-slate-500">{active.length} expense{active.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => exportGroupToCSV(expenses, group.name, members)}
+          <button onClick={() => hasFeature('csv_export') ? exportGroupToCSV(expenses, group.name, members) : onUpgradeRequired?.({ feature: 'csv_export', upgrade_to: 'pro', current_plan: userPlan.plan })}
             className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-sm text-slate-300 transition-colors">
-            <Download className="h-4 w-4" /> CSV
+            <Download className="h-4 w-4" /> CSV{!hasFeature('csv_export') && <Zap className="h-3 w-3 text-indigo-400" />}
           </button>
-          <button onClick={async () => { setPdfLoading(true); try { await exportGroupToPDF(expenses, group.name, members, dateLabel) } finally { setPdfLoading(false) } }}
+          <button onClick={async () => {
+            if (!hasFeature('pdf_export')) { onUpgradeRequired?.({ feature: 'pdf_export', upgrade_to: 'pro', current_plan: userPlan.plan }); return }
+            setPdfLoading(true); try { await exportGroupToPDF(expenses, group.name, members, dateLabel) } finally { setPdfLoading(false) }
+          }}
             disabled={pdfLoading}
             className="flex items-center gap-1.5 px-3 py-2 bg-violet-600 hover:bg-violet-500 border border-violet-500/40 rounded-xl text-sm text-white font-medium transition-colors disabled:opacity-60">
             {pdfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-            {pdfLoading ? 'Generating…' : 'PDF'}
+            {pdfLoading ? 'Generating…' : 'PDF'}{!hasFeature('pdf_export') && <Zap className="h-3 w-3 text-yellow-300" />}
           </button>
         </div>
       </div>
@@ -4116,7 +4352,7 @@ function compressImageToBase64(file, maxDim = 1400, quality = 0.85) {
 }
 
 // ── Add Expense Modal ─────────────────────────────────────────────────────────
-function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialExpense, onClose, onSuccess }) {
+function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialExpense, onClose, onSuccess, hasFeature = () => true, onUpgradeRequired }) {
   const [description, setDescription] = useState(initialExpense?.description || '')
   const [amount, setAmount]           = useState(initialExpense ? initialExpense.amount.toString() : '')
   const [payerId, setPayerId]         = useState(initialExpense ? initialExpense.payer_id : currentUser.id)
@@ -4455,13 +4691,17 @@ function AddExpenseModal({ currentUser, users, groups, defaultGroupId, initialEx
               {/* Recurrence */}
               {!initialExpense && (
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-2">
                     <Zap className="h-3 w-3" /> Repeat
+                    {!hasFeature('recurring_expenses') && <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded-full">Pro</span>}
                   </label>
                   <div className="flex gap-2">
                     {[null, 'weekly', 'monthly', 'yearly'].map(r => (
-                      <button key={r ?? 'none'} type="button" onClick={() => setRecurrence(r)}
-                        className={`flex-1 py-1.5 rounded-lg border text-xs font-medium transition-all ${recurrence === r ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
+                      <button key={r ?? 'none'} type="button" onClick={() => {
+                        if (r && !hasFeature('recurring_expenses')) { onUpgradeRequired?.({ feature: 'recurring_expenses', upgrade_to: 'pro', current_plan: 'free' }); return }
+                        setRecurrence(r)
+                      }}
+                        className={`flex-1 py-1.5 rounded-lg border text-xs font-medium transition-all ${recurrence === r ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:border-slate-500'} ${r && !hasFeature('recurring_expenses') ? 'opacity-50' : ''}`}>
                         {r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Once'}
                       </button>
                     ))}

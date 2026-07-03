@@ -261,3 +261,29 @@ class InviteResponse(BaseModel):
     invited_by_name: str
     token: str
     message: str
+
+
+class PlanUpdateRequest(BaseModel):
+    plan: str   # 'free' | 'pro' | 'business'
+
+
+class FeatureFlagUpdateRequest(BaseModel):
+    enabled: bool
+    limit_value: Optional[int] = None
+
+
+class GroupBudgetCreate(BaseModel):
+    amount: float
+    period: str          # 'monthly' | 'yearly' | 'total'
+    created_by_id: int
+
+
+class GroupBudgetResponse(BaseModel):
+    id: int
+    group_id: int
+    amount: float
+    period: str
+    spent: Optional[float] = None
+
+    class Config:
+        from_attributes = True

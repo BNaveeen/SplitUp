@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from database import User, Group, Expense, ExpenseSplit, ExpenseDeletionApproval, ExpenseMessage
 from routes.deps import get_db, get_current_user_id
+from services.subscription import require_under_limit, require_feature, check_feature
 from services.helpers import (
     _push_group_event, _add_notification, _add_system_message,
     _format_expense, _EXPENSE_LOAD_OPTIONS,
@@ -34,6 +35,19 @@ def split_expense(
     if abs(total_split - expense.amount) > 0.02:
         raise HTTPException(status_code=400,
                             detail=f"Split amounts ({total_split:.2f}) do not match expense ({expense.amount:.2f})")
+
+    # Enforce max_expenses_per_group
+    if expense.group_id:
+        from sqlalchemy import func as sqlfunc
+        expense_count = db.query(sqlfunc.count(Expense.id)).filter(
+            Expense.group_id == expense.group_id,
+            Expense.status.in_(["active", "pending_deletion"])
+        ).scalar() or 0
+        require_under_limit(db, current_user_id, 'max_expenses_per_group', expense_count, upgrade_to='pro')
+
+    # Enforce recurring_expenses feature
+    if expense.recurrence in ('weekly', 'monthly', 'yearly'):
+        require_feature(db, current_user_id, 'recurring_expenses', upgrade_to='pro')
 
     expense_date = datetime.utcnow()
     if expense.date:
@@ -339,6 +353,7 @@ def get_expense_chat(
     current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    require_feature(db, current_user_id, 'expense_chat', upgrade_to='business')
     messages = (db.query(ExpenseMessage)
                 .filter(ExpenseMessage.expense_id == expense_id)
                 .order_by(ExpenseMessage.created_at.asc()).all())
@@ -358,6 +373,7 @@ async def post_expense_chat(
     current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    require_feature(db, current_user_id, 'expense_chat', upgrade_to='business')
     if msg.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     new_msg = ExpenseMessage(expense_id=expense_id, user_id=msg.user_id,

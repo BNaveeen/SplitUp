@@ -1,7 +1,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 from database import User, Expense, ExpenseSplit, Notification, Settlement, group_members
 from routes.deps import get_db, get_current_user_id
@@ -202,6 +202,35 @@ def get_pending_settlements(
     settlements = db.query(Settlement).filter(
         Settlement.payee_id == user_id, Settlement.status == "pending"
     ).all()
+    return [
+        SettlementResponse(
+            id=s.id, payer_id=s.payer_id,
+            payer_name=s.payer.name if s.payer else "?",
+            payee_id=s.payee_id,
+            payee_name=s.payee.name if s.payee else "?",
+            amount=float(s.amount), group_id=s.group_id,
+            expense_id=s.expense_id, status=s.status,
+            created_at=s.created_at.isoformat()
+        )
+        for s in settlements
+    ]
+
+
+@router.get("/users/{user_id}/all_settlements", response_model=List[SettlementResponse])
+def get_all_settlements(
+    user_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    settlements = (
+        db.query(Settlement)
+        .filter(or_(Settlement.payer_id == user_id, Settlement.payee_id == user_id))
+        .order_by(Settlement.created_at.desc())
+        .limit(200)
+        .all()
+    )
     return [
         SettlementResponse(
             id=s.id, payer_id=s.payer_id,

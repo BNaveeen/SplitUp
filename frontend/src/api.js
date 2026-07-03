@@ -108,7 +108,16 @@ async function apiFetch(path, options = {}, _attempt = 0) {
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.detail || `Request failed: ${res.status}`)
+    const detail = data.detail
+    const msg = typeof detail === 'string' ? detail : detail?.message || `Request failed: ${res.status}`
+    const err = new Error(msg)
+    if (detail?.upgrade_to) {
+      err.upgrade_to  = detail.upgrade_to
+      err.feature     = detail.feature
+      err.current_plan = detail.current_plan
+      window.dispatchEvent(new CustomEvent('upgrade_required', { detail }))
+    }
+    throw err
   }
   return res.json()
 }
@@ -336,6 +345,25 @@ export const adminWipeTransactions = (confirmPhrase) =>
 
 export const searchUsers = (q, excludeGroupId = null) =>
   apiFetch(`/users/search?q=${encodeURIComponent(q)}${excludeGroupId ? `&exclude_group_id=${excludeGroupId}` : ''}`).catch(() => []);
+
+// ── Subscriptions & Plans ─────────────────────────────────────────────────────
+
+export const fetchSubscription   = () => apiFetch('/subscription').catch(() => null)
+export const fetchPlans          = () => apiFetch('/plans').catch(() => ({}))
+
+// ── Group Budget ──────────────────────────────────────────────────────────────
+
+export const fetchGroupBudget    = (groupId) => apiFetch(`/groups/${groupId}/budget`).catch(() => null)
+export const setGroupBudget      = (groupId, data) => apiFetch(`/groups/${groupId}/budget`, { method: 'POST', body: JSON.stringify(data) })
+export const deleteGroupBudget   = (groupId) => apiFetch(`/groups/${groupId}/budget`, { method: 'DELETE' })
+
+// ── Admin: Subscriptions ──────────────────────────────────────────────────────
+
+export const adminGetSubscriptions   = () => apiFetch('/admin/subscriptions').catch(() => [])
+export const adminSetUserPlan        = (userId, plan) => apiFetch(`/admin/users/${userId}/plan`, { method: 'PUT', body: JSON.stringify({ plan }) })
+export const adminGetFeatureFlags    = () => apiFetch('/admin/feature-flags').catch(() => ({}))
+export const adminUpdateFeatureFlag  = (plan, featureKey, enabled, limitValue = null) =>
+  apiFetch(`/admin/feature-flags/${plan}/${featureKey}`, { method: 'PUT', body: JSON.stringify({ enabled, limit_value: limitValue }) })
 
 export const fetchHealth = () => {
   const k    = _pool ? _pool.pick() : -1

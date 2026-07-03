@@ -8,6 +8,7 @@ from database import User, Group, PendingInvite, group_members
 from routes.deps import get_db, get_current_user_id
 from schemas import InviteRequest, InviteResponse
 from services.helpers import _push_group_event
+from services.subscription import require_feature
 
 router = APIRouter()
 
@@ -23,6 +24,7 @@ def send_invite(
     group = db.query(Group).filter(Group.id == req.group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+    require_feature(db, current_user_id, 'invite_link', upgrade_to='pro')
     inviter = db.query(User).filter(User.id == req.invited_by_id).first()
     if not inviter:
         raise HTTPException(status_code=404, detail="Inviting user not found")
