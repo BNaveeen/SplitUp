@@ -865,6 +865,39 @@ function UpgradeModal({ detail, onClose }) {
   )
 }
 
+// ── LogoutModal ───────────────────────────────────────────────────────────────
+function LogoutModal({ onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+      <motion.div initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
+        className="bg-slate-900 border border-slate-700/60 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="h-10 w-10 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center justify-center shrink-0">
+              <LogOut className="h-5 w-5 text-rose-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base">Log out?</h3>
+              <p className="text-xs text-slate-400 mt-0.5">You'll need to sign in again to continue.</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onCancel}
+              className="flex-1 py-2.5 text-sm font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors">
+              Cancel
+            </button>
+            <button onClick={onConfirm}
+              className="flex-1 py-2.5 text-sm font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-colors flex items-center justify-center gap-1.5">
+              <LogOut className="h-4 w-4" /> Log out
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   const [activeTab, setActiveTab]   = useState('groups')
@@ -888,6 +921,7 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   const wsRef = useRef(null)
   const [userPlan, setUserPlan] = useState({ plan: 'free', features: {} })
   const [upgradeModal, setUpgradeModal] = useState(null) // { feature, upgrade_to, current_plan }
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
 
   // Admins bypass all subscription gates
   const isAdmin = user.is_admin === true
@@ -1065,9 +1099,9 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   }
 
   const tabs = [
-    { id: 'groups',   label: 'Groups',   icon: Home },
-    { id: 'activity', label: 'Activity', icon: Activity },
-    { id: 'people',   label: 'People',   icon: Users },
+    { id: 'groups',   label: 'Groups',   icon: Home,     feature: null,         requiredPlan: null },
+    { id: 'activity', label: 'Activity', icon: Activity, feature: null,         requiredPlan: null },
+    { id: 'people',   label: 'People',   icon: Users,    feature: 'people_tab', requiredPlan: 'business' },
   ]
 
   if (showAdmin) {
@@ -1195,7 +1229,7 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
                 <Settings className="h-4 w-4" />
               </button>
             )}
-            <button onClick={onLogout} className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors" title="Log out">
+            <button onClick={() => setShowLogoutModal(true)} className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors" title="Log out">
               <LogOut className="h-4 w-4" />
             </button>
           </div>
@@ -1225,6 +1259,11 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
       {/* Upgrade Modal */}
       <AnimatePresence>
         {upgradeModal && <UpgradeModal detail={upgradeModal} onClose={() => setUpgradeModal(null)} />}
+      </AnimatePresence>
+
+      {/* Logout Confirmation */}
+      <AnimatePresence>
+        {showLogoutModal && <LogoutModal onConfirm={onLogout} onCancel={() => setShowLogoutModal(false)} />}
       </AnimatePresence>
 
       {/* Floating Toast Notification */}
@@ -1308,13 +1347,33 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
           {/* Bottom nav */}
           <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-xl border-t border-slate-700/40">
             <div className="max-w-2xl mx-auto flex items-center justify-around h-16 px-4 relative">
-              {tabs.map(tab => (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                  className={`flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl transition-all ${activeTab === tab.id ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'}`}>
-                  <tab.icon className={`h-5 w-5 ${activeTab === tab.id ? 'stroke-2' : ''}`} />
-                  <span className="text-[10px] font-medium">{tab.label}</span>
-                </button>
-              ))}
+              {tabs.map(tab => {
+                const isLocked = tab.feature && !hasFeature(tab.feature)
+                const TabIcon = tab.icon
+                return (
+                  <button key={tab.id}
+                    onClick={() => isLocked
+                      ? setUpgradeModal({ feature: tab.feature, upgrade_to: tab.requiredPlan, current_plan: userPlan.plan })
+                      : setActiveTab(tab.id)}
+                    className={`flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl transition-all ${
+                      isLocked
+                        ? 'text-slate-600'
+                        : activeTab === tab.id
+                          ? 'text-indigo-400'
+                          : 'text-slate-500 hover:text-slate-300'
+                    }`}>
+                    <div className="relative">
+                      <TabIcon className={`h-5 w-5 ${activeTab === tab.id && !isLocked ? 'stroke-2' : ''}`} />
+                      {isLocked && (
+                        <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-indigo-600 rounded-full flex items-center justify-center shadow">
+                          <Zap className="h-2 w-2 text-white" />
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-medium">{tab.label}</span>
+                  </button>
+                )
+              })}
               <button
                 onClick={() => setAddExp(true)}
                 className="absolute -top-7 left-1/2 -translate-x-1/2 h-14 w-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/40 hover:scale-110 transition-transform active:scale-95">
