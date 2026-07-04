@@ -246,9 +246,9 @@ def admin_get_subscriptions(
             SubscriptionModel.is_active == True
         ).first()
         result.append({
-            "user_id": u.id,
-            "user_name": u.name,
-            "user_email": u.email,
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
             "plan": sub.plan if sub else "free",
             "started_at": sub.started_at.isoformat() if sub else None,
             "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
