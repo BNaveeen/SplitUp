@@ -8,39 +8,58 @@ body {
 
 /* ── Light mode ──────────────────────────────────────── */
 
+/* Level 0: page canvas */
 html.light-mode body {
-  background: #f1f5f9 !important;
+  background: #dce5ef !important;
   color: #0f172a !important;
 }
 
-/* Dark slate-9xx / slate-8xx → light */
-html.light-mode [class*="bg-slate-9"],
-html.light-mode [class*="bg-slate-8"] {
-  background-color: #f1f5f9 !important;
+/* Arbitrary dark hex wrappers (bg-[#0f1117], bg-[#1a1a2e] etc.) → page canvas */
+html.light-mode [class*="bg-[#0"],
+html.light-mode [class*="bg-[#1"] {
+  background-color: #dce5ef !important;
 }
 
+/* Dark slate gradient wrappers (from-slate-950 etc.) → page canvas */
+html.light-mode [class*="from-slate-9"],
+html.light-mode [class*="via-slate-9"] {
+  background-image: none !important;
+  background-color: #dce5ef !important;
+}
+
+/* Level 1: main surfaces (cards, modals, sidebar) → white */
+html.light-mode [class*="bg-slate-9"] {
+  background-color: #ffffff !important;
+}
+
+/* Level 2: secondary surfaces (inner card sections, list items) → off-white */
+html.light-mode [class*="bg-slate-8"] {
+  background-color: #f0f4f8 !important;
+}
+
+/* Level 3: tertiary (subtle hover areas, dividers) */
 html.light-mode [class*="bg-slate-7"] {
-  background-color: #e2e8f0 !important;
+  background-color: #e4ecf5 !important;
 }
 
 html.light-mode [class*="bg-slate-6"] {
-  background-color: #cbd5e1 !important;
+  background-color: #d8e3ee !important;
 }
 
-/* Arbitrary dark hex backgrounds like bg-[#0f1117], bg-[#1a1a2e] */
-html.light-mode [class*="bg-[#0"],
-html.light-mode [class*="bg-[#1"] {
-  background-color: #f1f5f9 !important;
+/* Nav bars and sticky headers with backdrop blur → white panel */
+html.light-mode [class*="backdrop-blur"] {
+  background-color: rgba(255, 255, 255, 0.92) !important;
 }
 
-/* nav / aside */
+/* Sidebar and horizontal nav */
 html.light-mode nav,
 html.light-mode aside {
-  background-color: #f8fafc !important;
-  border-color: #e2e8f0 !important;
+  background-color: #ffffff !important;
+  border-color: #d0dce9 !important;
 }
 
-/* White / light text → dark */
+/* ── Text ───────────────────────────────────────────── */
+
 html.light-mode [class*="text-white"] {
   color: #0f172a !important;
 }
@@ -51,37 +70,52 @@ html.light-mode [class*="text-slate-3"] {
   color: #1e293b !important;
 }
 
-html.light-mode [class*="text-slate-4"],
-html.light-mode [class*="text-slate-5"] {
+html.light-mode [class*="text-slate-4"] {
+  color: #475569 !important;
+}
+
+html.light-mode [class*="text-slate-5"],
+html.light-mode [class*="text-slate-6"] {
   color: #64748b !important;
 }
 
-/* Borders */
+/* ── Borders ─────────────────────────────────────────── */
+
 html.light-mode [class*="border-slate-8"],
 html.light-mode [class*="border-slate-7"],
 html.light-mode [class*="border-slate-6"] {
-  border-color: #e2e8f0 !important;
+  border-color: #d0dce9 !important;
 }
 
-/* Inputs / textareas */
+html.light-mode [class*="border-slate-9"] {
+  border-color: #c4d3e2 !important;
+}
+
+/* ── Inputs ──────────────────────────────────────────── */
+
 html.light-mode input,
 html.light-mode textarea,
 html.light-mode select {
-  background-color: #ffffff !important;
+  background-color: #f8fbff !important;
   color: #0f172a !important;
-  border-color: #e2e8f0 !important;
+  border-color: #d0dce9 !important;
 }
+
 html.light-mode input::placeholder,
 html.light-mode textarea::placeholder {
   color: #94a3b8 !important;
 }
 
-/* Backdrop blur panels */
-html.light-mode [class*="backdrop-blur"] {
-  background-color: rgba(248, 250, 252, 0.9) !important;
+/* ── Subtle card depth ───────────────────────────────── */
+
+html.light-mode [class*="rounded-2xl"][class*="bg-slate-9"],
+html.light-mode [class*="rounded-3xl"][class*="bg-slate-8"],
+html.light-mode [class*="rounded-2xl"][class*="bg-slate-8"] {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
 }
 
 /* ── Custom scrollbar ───────────────────────────────── */
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
 }
@@ -97,7 +131,7 @@ html.light-mode [class*="backdrop-blur"] {
 }
 
 html.light-mode .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #b8c8d9;
 }
 html.light-mode .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
