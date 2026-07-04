@@ -2671,12 +2671,17 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
         </nav>
 
         {/* Back button */}
-        <div className="px-1.5 pb-4 border-t border-slate-800/60 pt-3 shrink-0">
+        <div className="px-1.5 pb-3 border-t border-slate-800/60 pt-3 shrink-0">
           <button onClick={onBack} title="Back to app"
             className="flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-slate-800/70 transition-all">
             <ArrowLeft className="h-4 w-4" />
             <span>Back</span>
           </button>
+          {/* Build hash */}
+          <p className="text-center text-[8px] font-mono text-slate-700 mt-2 leading-tight select-all"
+            title={`Built ${__GIT_DATE__}`}>
+            {__GIT_HASH__}
+          </p>
         </div>
       </aside>
 
@@ -5146,9 +5151,19 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
         )}
 
         {/* Change Password */}
-        <div className="px-6 pb-6 border-t border-slate-700/50 pt-4">
+        <div className="px-6 pb-4 border-t border-slate-700/50 pt-4">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Change Password</p>
           <ChangePasswordForm userId={user.id} />
+        </div>
+
+        {/* Build version */}
+        <div className="px-6 pb-5 flex items-center justify-center gap-1.5">
+          <span className="text-[10px] text-slate-600 font-mono select-all"
+            title={`Built ${__GIT_DATE__}`}>
+            v{__GIT_HASH__}
+          </span>
+          <span className="text-[10px] text-slate-700">·</span>
+          <span className="text-[10px] text-slate-600">{__GIT_DATE__}</span>
         </div>
       </motion.div>
     </motion.div>
