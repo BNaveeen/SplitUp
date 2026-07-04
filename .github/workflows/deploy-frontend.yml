@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,10 +40,17 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Deploy to gh-pages
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          branch: gh-pages
-          folder: frontend/dist
-          commit-message: 'Deploy from ${{ github.sha }}'
-          clean: true
+      - name: Configure git
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Deploy via gh-pages
+        working-directory: frontend
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node_modules/.bin/gh-pages \
+            -d dist \
+            -r "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" \
+            -m "Deploy from ${{ github.sha }}"
