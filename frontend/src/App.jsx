@@ -6,7 +6,8 @@ import {
   Plus, ArrowLeft, UserPlus, ChevronRight, Receipt, TrendingDown,
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
-  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText
+  KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText,
+  Moon, Sun
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -441,6 +442,18 @@ function playNotificationSound() {
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('splitclone_theme') || 'dark')
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (theme === 'light') {
+      root.classList.add('light-mode')
+    } else {
+      root.classList.remove('light-mode')
+    }
+    localStorage.setItem('splitclone_theme', theme)
+  }, [theme])
+
   // Initialize immediately from localStorage so refresh never flashes the login page
   const [user, setUser] = useState(() => {
     try {
@@ -519,7 +532,7 @@ export default function App() {
       <div className="hidden sm:block fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-indigo-700/15 blur-[80px] pointer-events-none" />
       <div className="hidden sm:block fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-700/15 blur-[80px] pointer-events-none" />
       <AnimatePresence mode="wait">
-        <Dashboard key="dash" user={user} onLogout={handleLogout} />
+        <Dashboard key="dash" user={user} onLogout={handleLogout} theme={theme} onThemeChange={setTheme} />
       </AnimatePresence>
     </div>
   )
@@ -853,7 +866,7 @@ function UpgradeModal({ detail, onClose }) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({ user, onLogout }) {
+function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   const [activeTab, setActiveTab]   = useState('groups')
   const [groups, setGroups]         = useState([])
   const [users, setUsers]           = useState([])
@@ -876,8 +889,10 @@ function Dashboard({ user, onLogout }) {
   const [userPlan, setUserPlan] = useState({ plan: 'free', features: {} })
   const [upgradeModal, setUpgradeModal] = useState(null) // { feature, upgrade_to, current_plan }
 
-  const hasFeature = (key) => userPlan.features?.[key] === true
-  const getLimit = (key) => userPlan.features?.[key] ?? null // null = unlimited
+  // Admins bypass all subscription gates
+  const isAdmin = user.is_admin === true
+  const hasFeature = (key) => isAdmin || userPlan.features?.[key] === true
+  const getLimit = (key) => isAdmin ? null : (userPlan.features?.[key] ?? null)
 
   // WebSocket: real-time push for notifications and group changes
   useEffect(() => {
@@ -1170,10 +1185,6 @@ function Dashboard({ user, onLogout }) {
                 </>
               )}
             </div>
-            <button onClick={() => { setShowProfile(true); setShowNotifs(false) }}
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-all hover:opacity-80 ${PLAN_COLOR[userPlan.plan] || PLAN_COLOR.free}`}>
-              {PLAN_LABEL[userPlan.plan] || 'Free'}
-            </button>
             <button onClick={() => { setShowProfile(true); setShowNotifs(false) }} className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-xs font-bold text-white hover:ring-2 hover:ring-indigo-400 transition-all focus:outline-none`}>
               {user.name.charAt(0).toUpperCase()}
             </button>
@@ -1196,7 +1207,10 @@ function Dashboard({ user, onLogout }) {
           <ProfileModal
             user={user}
             userPlan={userPlan}
+            isAdmin={isAdmin}
             onUpgradeRequired={setUpgradeModal}
+            theme={theme}
+            onThemeChange={onThemeChange}
             onClose={() => setShowProfile(false)}
             onSave={(newUser) => {
               const saved = JSON.parse(localStorage.getItem('splitclone_user') || '{}');
@@ -4951,98 +4965,124 @@ function ChangePasswordForm({ userId }) {
 }
 
 // ── Profile Modal ─────────────────────────────────────────────────────────────
-function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, onUpgradeRequired }) {
+function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, isAdmin = false, onUpgradeRequired, theme = 'dark', onThemeChange }) {
   const [name, setName] = useState(user.name)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     try {
       const updatedUser = await updateUser(user.id, name)
       onSave(updatedUser)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
   }
+
+  const plan = isAdmin ? 'admin' : (userPlan.plan || 'free')
+  const planDisplay = isAdmin ? 'Admin' : (PLAN_LABEL[plan] || 'Free')
+  const planColor = isAdmin
+    ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+    : (PLAN_COLOR[plan] || PLAN_COLOR.free)
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
       <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }}
-        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden relative">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2"><Settings className="h-4 w-4 text-indigo-400" /> Edit Profile</h3>
+        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden relative max-h-[90vh] overflow-y-auto">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50 sticky top-0 bg-slate-800 z-10">
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <Settings className="h-4 w-4 text-indigo-400" /> Profile
+          </h3>
           <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="flex justify-center mb-4">
-            <div className={`h-20 w-20 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-3xl font-bold text-white shadow-lg`}>
-              {name.charAt(0).toUpperCase()}
-            </div>
+        {/* Avatar + name */}
+        <div className="px-6 pt-5 pb-1 flex items-center gap-4">
+          <div className={`h-16 w-16 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-2xl font-bold text-white shadow-lg`}>
+            {name.charAt(0).toUpperCase()}
           </div>
-          <div>
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Display Name</label>
-            <input type="text" required value={name} onChange={e => setName(e.target.value)}
-              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Email (Cannot be changed)</label>
-            <input type="email" disabled value={user.email}
-              className="w-full bg-slate-900/30 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-500 cursor-not-allowed" />
-          </div>
-          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-          <button type="submit" disabled={loading || !name.trim()}
-            className="w-full mt-4 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-all shadow-lg shadow-indigo-500/20 flex justify-center items-center">
-            {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Save Changes'}
-          </button>
-        </form>
-
-        {/* Current Plan */}
-        <div className="px-6 pb-4 border-t border-slate-700/50 pt-5">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Current Plan</h3>
-          <div className={`rounded-2xl border p-4 ${
-            userPlan.plan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
-            userPlan.plan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
-                                          'bg-slate-800/50 border-slate-700/50'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${PLAN_COLOR[userPlan.plan] || PLAN_COLOR.free}`}>
-                  {PLAN_LABEL[userPlan.plan] || 'Free'}
-                </span>
-                <span className="text-xs text-slate-400">{PLAN_PRICE[userPlan.plan]}</span>
-              </div>
-              {userPlan.plan !== 'business' && (
-                <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: userPlan.plan === 'free' ? 'pro' : 'business', current_plan: userPlan.plan }) }}
-                  className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors">
-                  <Zap className="h-3 w-3" /> Upgrade
-                </button>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              {PLAN_FEATURES[userPlan.plan]?.slice(0, 4).map(f => (
-                <div key={f} className="flex items-center gap-2 text-xs text-slate-400">
-                  <Check className="h-3 w-3 text-emerald-400 shrink-0" /> {f}
-                </div>
-              ))}
-              {(PLAN_FEATURES[userPlan.plan]?.length ?? 0) > 4 && (
-                <p className="text-[10px] text-slate-500 pl-5">+{PLAN_FEATURES[userPlan.plan].length - 4} more features</p>
-              )}
-            </div>
+          <div className="min-w-0">
+            <p className="font-bold text-white truncate">{name}</p>
+            <p className="text-xs text-slate-400 truncate">{user.email}</p>
+            <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${planColor}`}>
+              {planDisplay}
+            </span>
           </div>
         </div>
 
+        {/* Edit name form */}
+        <form onSubmit={handleSubmit} className="px-6 pt-4 pb-2 space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Display Name</label>
+            <input type="text" required value={name} onChange={e => setName(e.target.value)}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 text-sm" />
+          </div>
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+          <button type="submit" disabled={loading || !name.trim()}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-all flex justify-center items-center text-sm">
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Save Name'}
+          </button>
+        </form>
+
+        {/* Appearance */}
+        <div className="px-6 py-4 border-t border-slate-700/50">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Appearance</p>
+          <div className="flex items-center justify-between bg-slate-900/50 rounded-xl px-4 py-3 border border-slate-700/50">
+            <div className="flex items-center gap-2.5">
+              {theme === 'dark' ? <Moon className="h-4 w-4 text-indigo-400" /> : <Sun className="h-4 w-4 text-amber-400" />}
+              <span className="text-sm text-slate-200 font-medium">{theme === 'dark' ? 'Dark mode' : 'Light mode'}</span>
+            </div>
+            <button onClick={() => onThemeChange?.(theme === 'dark' ? 'light' : 'dark')}
+              className={`relative h-6 w-11 rounded-full transition-colors ${theme === 'dark' ? 'bg-indigo-600' : 'bg-amber-400'}`}>
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${theme === 'dark' ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Subscription — hide for admins */}
+        {!isAdmin && (
+          <div className="px-6 py-4 border-t border-slate-700/50">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Subscription</p>
+            <div className={`rounded-2xl border p-4 ${
+              plan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
+              plan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
+                                    'bg-slate-800/50 border-slate-700/50'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${planColor}`}>{planDisplay}</span>
+                  <span className="text-xs text-slate-400">{PLAN_PRICE[plan] || '£0/mo'}</span>
+                </div>
+                {plan !== 'business' && (
+                  <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: plan === 'free' ? 'pro' : 'business', current_plan: plan }) }}
+                    className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+                    <Zap className="h-3 w-3" /> Upgrade
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {(PLAN_FEATURES[plan] || PLAN_FEATURES.free).slice(0, 4).map(f => (
+                  <div key={f} className="flex items-center gap-2 text-xs text-slate-400">
+                    <Check className="h-3 w-3 text-emerald-400 shrink-0" />{f}
+                  </div>
+                ))}
+                {(PLAN_FEATURES[plan] || []).length > 4 && (
+                  <p className="text-[10px] text-slate-500 pl-5">+{(PLAN_FEATURES[plan] || []).length - 4} more features</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Change Password */}
-        <div className="px-6 pb-6 border-t border-slate-700/50 pt-5">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Change Password</h3>
+        <div className="px-6 pb-6 border-t border-slate-700/50 pt-4">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Change Password</p>
           <ChangePasswordForm userId={user.id} />
         </div>
       </motion.div>

@@ -147,9 +147,17 @@ def get_all_flags_by_plan(db: Session) -> dict:
     return result
 
 
+def _is_admin(db: Session, user_id: int) -> bool:
+    from database import User
+    user = db.query(User).filter(User.id == user_id).first()
+    return bool(user and user.is_admin)
+
+
 def require_feature(db: Session, user_id: int, feature_key: str, upgrade_to: str = 'pro'):
-    """Raises HTTPException 403 with upgrade info if feature not available."""
+    """Raises HTTPException 403 with upgrade info if feature not available. Admins bypass."""
     from fastapi import HTTPException
+    if _is_admin(db, user_id):
+        return
     if not check_feature(db, user_id, feature_key):
         plan = get_user_plan(db, user_id)
         raise HTTPException(
@@ -164,8 +172,10 @@ def require_feature(db: Session, user_id: int, feature_key: str, upgrade_to: str
 
 
 def require_under_limit(db: Session, user_id: int, limit_key: str, current_count: int, upgrade_to: str = 'pro'):
-    """Raises HTTPException 403 if current_count >= limit."""
+    """Raises HTTPException 403 if current_count >= limit. Admins bypass."""
     from fastapi import HTTPException
+    if _is_admin(db, user_id):
+        return
     limit = get_limit(db, user_id, limit_key)
     if limit and limit > 0 and current_count >= limit:
         plan = get_user_plan(db, user_id)
