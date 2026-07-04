@@ -2496,13 +2496,13 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [planUpdating, setPlanUpdating]     = useState(null)
 
   const TABS = [
-    { id: 'overview',       label: 'Overview',       icon: LayoutGrid },
-    { id: 'users',          label: 'Users',           icon: Users },
-    { id: 'groups',         label: 'Groups',          icon: Home },
-    { id: 'expenses',       label: 'Expenses',        icon: Receipt },
-    { id: 'settlements',    label: 'Settlements',     icon: CheckCircle2 },
-    { id: 'notifications',  label: 'Notifications',   icon: Bell },
-    { id: 'subscriptions',  label: 'Subscriptions',   icon: CreditCard },
+    { id: 'overview',       label: 'Overview',  icon: LayoutGrid },
+    { id: 'users',          label: 'Users',     icon: Users },
+    { id: 'groups',         label: 'Groups',    icon: Home },
+    { id: 'expenses',       label: 'Expenses',  icon: Receipt },
+    { id: 'settlements',    label: 'Settle',    icon: CheckCircle2 },
+    { id: 'notifications',  label: 'Alerts',    icon: Bell },
+    { id: 'subscriptions',  label: 'Plans',     icon: CreditCard },
   ]
 
   const loadTab = useCallback(async (tab) => {
@@ -2575,6 +2575,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const unreadCount = adminNotifs.filter(n => !n.is_read).length
 
   const activeTabMeta = TABS.find(t => t.id === activeTab) || TABS[0]
+  const ActiveTabIcon = activeTabMeta.icon
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex bg-[#0f1117]">
@@ -2589,26 +2590,31 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
         </div>
 
         {/* Nav items */}
-        <nav className="flex-1 py-3 flex flex-col gap-0.5 px-2 overflow-y-auto">
-          {TABS.map(t => (
-            <button key={t.id}
-              onClick={() => { setActiveTab(t.id); setSearchQuery('') }}
-              title={t.label}
-              className={`flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-semibold uppercase tracking-wide transition-all ${
-                activeTab === t.id
-                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25'
-                  : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800/70'
-              }`}>
-              <t.icon className="h-4 w-4 shrink-0" />
-              <span className="leading-none">{t.label}</span>
-            </button>
-          ))}
+        <nav className="flex-1 py-3 flex flex-col gap-0.5 px-1.5 overflow-y-auto">
+          {TABS.map(t => {
+            const TabIcon = t.icon
+            return (
+              <button key={t.id}
+                onClick={() => { setActiveTab(t.id); setSearchQuery('') }}
+                title={['settlements','notifications','subscriptions'].includes(t.id)
+                  ? { settlements:'Settlements', notifications:'Notifications', subscriptions:'Subscriptions' }[t.id]
+                  : t.label}
+                className={`flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-wider transition-all ${
+                  activeTab === t.id
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25'
+                    : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800/70'
+                }`}>
+                <TabIcon className="h-4 w-4 shrink-0" />
+                <span className="leading-none w-full text-center truncate px-0.5">{t.label}</span>
+              </button>
+            )
+          })}
         </nav>
 
         {/* Back button */}
-        <div className="px-2 pb-4 border-t border-slate-800/60 pt-3 shrink-0">
+        <div className="px-1.5 pb-4 border-t border-slate-800/60 pt-3 shrink-0">
           <button onClick={onBack} title="Back to app"
-            className="flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-semibold uppercase tracking-wide text-slate-500 hover:text-white hover:bg-slate-800/70 transition-all">
+            className="flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-slate-800/70 transition-all">
             <ArrowLeft className="h-4 w-4" />
             <span>Back</span>
           </button>
@@ -2620,7 +2626,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
         {/* Section header */}
         <div className="sticky top-0 z-30 bg-[#0f1117]/90 backdrop-blur-xl border-b border-slate-800/60 px-5 h-14 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
-            <activeTabMeta.icon className="h-4.5 w-4.5 text-amber-400 h-5 w-5" />
+            <ActiveTabIcon className="h-5 w-5 text-amber-400" />
             <div>
               <h1 className="font-bold text-white text-sm leading-tight">{activeTabMeta.label}</h1>
               <p className="text-[10px] text-slate-500 leading-tight hidden sm:block">Admin Portal · {currentUser.name}</p>
@@ -5039,8 +5045,8 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
               <span className="text-sm text-slate-200 font-medium">{theme === 'dark' ? 'Dark mode' : 'Light mode'}</span>
             </div>
             <button onClick={() => onThemeChange?.(theme === 'dark' ? 'light' : 'dark')}
-              className={`relative h-6 w-11 rounded-full transition-colors ${theme === 'dark' ? 'bg-indigo-600' : 'bg-amber-400'}`}>
-              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${theme === 'dark' ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              className={`relative h-6 w-11 rounded-full transition-colors duration-200 ${theme === 'dark' ? 'bg-indigo-600' : 'bg-amber-400'}`}>
+              <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${theme === 'dark' ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
           </div>
         </div>
