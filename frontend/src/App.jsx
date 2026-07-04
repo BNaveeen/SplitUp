@@ -2492,7 +2492,7 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
                 <BalanceList balances={periodBalances} currentUser={currentUser} members={members} />
               </>
             ) : (
-              <InsightsTab expenses={filteredExpenses} members={members} group={group} dateLabel={dateFilterLabel} />
+              <InsightsTab expenses={filteredExpenses} members={members} group={group} dateLabel={dateFilterLabel} hasFeature={hasFeature} onUpgradeRequired={onUpgradeRequired} userPlan={userPlan} />
             )}
           </>
         )}
@@ -3673,7 +3673,7 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
 }
 
 // ── Insights Tab ─────────────────────────────────────────────────────────────
-function InsightsTab({ expenses, members, group, dateLabel = 'All time' }) {
+function InsightsTab({ expenses, members, group, dateLabel = 'All time', hasFeature = () => false, onUpgradeRequired, userPlan = { plan: 'free' } }) {
   const [pdfLoading, setPdfLoading] = useState(false)
   const active = expenses.filter(e => e.status === 'active' || e.status === 'pending_deletion' || e.status === 'approved_for_deletion')
 
