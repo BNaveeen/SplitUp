@@ -12,11 +12,12 @@ on:
       - '.github/workflows/deploy-frontend.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
@@ -37,9 +38,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Deploy to gh-pages branch
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Deploy to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./frontend/dist
-          commit_message: 'Deploy from ${{ github.sha }}'
+          branch: gh-pages
+          folder: frontend/dist
+          commit-message: 'Deploy from ${{ github.sha }}'
+          clean: true
