@@ -1170,11 +1170,10 @@ function Dashboard({ user, onLogout }) {
                 </>
               )}
             </div>
-            {userPlan.plan !== 'free' && (
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${PLAN_COLOR[userPlan.plan]}`}>
-                {PLAN_LABEL[userPlan.plan]}
-              </span>
-            )}
+            <button onClick={() => { setShowProfile(true); setShowNotifs(false) }}
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-all hover:opacity-80 ${PLAN_COLOR[userPlan.plan] || PLAN_COLOR.free}`}>
+              {PLAN_LABEL[userPlan.plan] || 'Free'}
+            </button>
             <button onClick={() => { setShowProfile(true); setShowNotifs(false) }} className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(user.id)} flex items-center justify-center text-xs font-bold text-white hover:ring-2 hover:ring-indigo-400 transition-all focus:outline-none`}>
               {user.name.charAt(0).toUpperCase()}
             </button>
@@ -1196,6 +1195,8 @@ function Dashboard({ user, onLogout }) {
         {showProfile && (
           <ProfileModal
             user={user}
+            userPlan={userPlan}
+            onUpgradeRequired={setUpgradeModal}
             onClose={() => setShowProfile(false)}
             onSave={(newUser) => {
               const saved = JSON.parse(localStorage.getItem('splitclone_user') || '{}');
@@ -4950,7 +4951,7 @@ function ChangePasswordForm({ userId }) {
 }
 
 // ── Profile Modal ─────────────────────────────────────────────────────────────
-function ProfileModal({ user, onClose, onSave }) {
+function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, onUpgradeRequired }) {
   const [name, setName] = useState(user.name)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -5004,9 +5005,44 @@ function ProfileModal({ user, onClose, onSave }) {
           </button>
         </form>
 
+        {/* Current Plan */}
+        <div className="px-6 pb-4 border-t border-slate-700/50 pt-5">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Current Plan</h3>
+          <div className={`rounded-2xl border p-4 ${
+            userPlan.plan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
+            userPlan.plan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
+                                          'bg-slate-800/50 border-slate-700/50'
+          }`}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${PLAN_COLOR[userPlan.plan] || PLAN_COLOR.free}`}>
+                  {PLAN_LABEL[userPlan.plan] || 'Free'}
+                </span>
+                <span className="text-xs text-slate-400">{PLAN_PRICE[userPlan.plan]}</span>
+              </div>
+              {userPlan.plan !== 'business' && (
+                <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: userPlan.plan === 'free' ? 'pro' : 'business', current_plan: userPlan.plan }) }}
+                  className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors">
+                  <Zap className="h-3 w-3" /> Upgrade
+                </button>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              {PLAN_FEATURES[userPlan.plan]?.slice(0, 4).map(f => (
+                <div key={f} className="flex items-center gap-2 text-xs text-slate-400">
+                  <Check className="h-3 w-3 text-emerald-400 shrink-0" /> {f}
+                </div>
+              ))}
+              {(PLAN_FEATURES[userPlan.plan]?.length ?? 0) > 4 && (
+                <p className="text-[10px] text-slate-500 pl-5">+{PLAN_FEATURES[userPlan.plan].length - 4} more features</p>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Change Password */}
-        <div className="px-6 pb-6 mt-6 pt-6 border-t border-slate-700/50">
-          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Change Password</h3>
+        <div className="px-6 pb-6 border-t border-slate-700/50 pt-5">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Change Password</h3>
           <ChangePasswordForm userId={user.id} />
         </div>
       </motion.div>
