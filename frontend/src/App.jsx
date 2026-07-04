@@ -2559,37 +2559,62 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const filteredSettlements = adminSettlements.filter(s => !settlementFilter || s.status === settlementFilter)
   const unreadCount = adminNotifs.filter(n => !n.is_read).length
 
+  const activeTabMeta = TABS.find(t => t.id === activeTab) || TABS[0]
+
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex flex-col bg-[#1a1a2e]">
-      {/* Fixed header */}
-      <div className="bg-slate-900/90 backdrop-blur-xl border-b border-slate-700/40 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="h-14 flex items-center gap-3">
-            <button onClick={onBack} className="p-2 -ml-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-            <div className="h-8 w-8 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center shrink-0">
-              <Settings className="h-4 w-4 text-white" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h1 className="font-bold text-white text-sm leading-tight">Admin Portal</h1>
-              <p className="text-[10px] text-slate-500 leading-tight">Platform management · {currentUser.name}</p>
-            </div>
-            <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">Admin</span>
-          </div>
-          {/* Tab bar */}
-          <div className="flex overflow-x-auto scrollbar-hide pb-0">
-            {TABS.map(t => (
-              <button key={t.id} onClick={() => { setActiveTab(t.id); setSearchQuery('') }}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 transition-all shrink-0 ${activeTab === t.id ? 'border-amber-500 text-amber-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
-                <t.icon className="h-3.5 w-3.5" />{t.label}
-              </button>
-            ))}
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex bg-[#0f1117]">
+
+      {/* ── Left Sidebar ── */}
+      <aside className="w-16 shrink-0 bg-slate-900 border-r border-slate-800/60 flex flex-col sticky top-0 h-screen z-40">
+        {/* Logo */}
+        <div className="h-14 flex items-center justify-center border-b border-slate-800/60 shrink-0">
+          <div className="h-8 w-8 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center">
+            <Settings className="h-4 w-4 text-white" />
           </div>
         </div>
-      </div>
 
-      <div className="flex-1 max-w-5xl w-full mx-auto px-4 py-6">
+        {/* Nav items */}
+        <nav className="flex-1 py-3 flex flex-col gap-0.5 px-2 overflow-y-auto">
+          {TABS.map(t => (
+            <button key={t.id}
+              onClick={() => { setActiveTab(t.id); setSearchQuery('') }}
+              title={t.label}
+              className={`flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-semibold uppercase tracking-wide transition-all ${
+                activeTab === t.id
+                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25'
+                  : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800/70'
+              }`}>
+              <t.icon className="h-4 w-4 shrink-0" />
+              <span className="leading-none">{t.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* Back button */}
+        <div className="px-2 pb-4 border-t border-slate-800/60 pt-3 shrink-0">
+          <button onClick={onBack} title="Back to app"
+            className="flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-semibold uppercase tracking-wide text-slate-500 hover:text-white hover:bg-slate-800/70 transition-all">
+            <ArrowLeft className="h-4 w-4" />
+            <span>Back</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main content area ── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        {/* Section header */}
+        <div className="sticky top-0 z-30 bg-[#0f1117]/90 backdrop-blur-xl border-b border-slate-800/60 px-5 h-14 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <activeTabMeta.icon className="h-4.5 w-4.5 text-amber-400 h-5 w-5" />
+            <div>
+              <h1 className="font-bold text-white text-sm leading-tight">{activeTabMeta.label}</h1>
+              <p className="text-[10px] text-slate-500 leading-tight hidden sm:block">Admin Portal · {currentUser.name}</p>
+            </div>
+          </div>
+          <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">Admin</span>
+        </div>
+
+        <div className="flex-1 px-5 py-5">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <Loader2 className="animate-spin h-8 w-8 text-amber-500" />
@@ -3068,6 +3093,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
 
           ) : null
         )}
+        </div>
       </div>
     </motion.div>
   )
