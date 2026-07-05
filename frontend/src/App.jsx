@@ -5229,6 +5229,25 @@ function WorkTab({ currentUser }) {
 
   return (
     <div className="pt-4 pb-4 space-y-4">
+      {/* My work profile */}
+      <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 flex items-center gap-4">
+        <div className={`h-12 w-12 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(currentUser.id)} flex items-center justify-center text-lg font-bold text-white`}>
+          {currentUser.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-white truncate">
+            {currentUser.title ? `${currentUser.title} ${currentUser.name}` : currentUser.name}
+          </p>
+          {currentUser.job_title && (
+            <p className="text-xs text-indigo-300 truncate">{currentUser.job_title}</p>
+          )}
+          <p className="text-xs text-slate-500 truncate">{currentUser.email}</p>
+        </div>
+        {orgInfo.org_role === 'admin' && (
+          <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border text-violet-300 bg-violet-500/10 border-violet-500/25">Admin</span>
+        )}
+      </div>
+
       {/* Org header */}
       <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-2xl p-4 flex items-center gap-3">
         <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0">
@@ -6728,8 +6747,11 @@ function ChangePasswordForm({ userId }) {
 }
 
 // ── Profile Modal ─────────────────────────────────────────────────────────────
+const TITLES = ['', 'Mr', 'Mrs', 'Ms', 'Miss', 'Dr', 'Prof', 'Rev']
+
 function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, isAdmin = false, onUpgradeRequired, theme = 'dark', onThemeChange }) {
-  const [name, setName] = useState(user.name)
+  const [name, setName]   = useState(user.name)
+  const [title, setTitle] = useState(user.title || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -6737,7 +6759,7 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
     e.preventDefault()
     setLoading(true); setError('')
     try {
-      const updatedUser = await updateUser(user.id, name)
+      const updatedUser = await updateUser(user.id, name, title)
       onSave(updatedUser)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
@@ -6771,7 +6793,7 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
             {name.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="font-bold text-white truncate">{name}</p>
+            <p className="font-bold text-white truncate">{title ? `${title} ${name}` : name}</p>
             <p className="text-xs text-slate-400 truncate">{user.email}</p>
             <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${planColor}`}>
               {planDisplay}
@@ -6779,8 +6801,15 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
           </div>
         </div>
 
-        {/* Edit name form */}
+        {/* Edit profile form */}
         <form onSubmit={handleSubmit} className="px-6 pt-4 pb-2 space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Title</label>
+            <select value={title} onChange={e => setTitle(e.target.value)}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 focus:outline-none focus:border-indigo-500 text-slate-100 text-sm">
+              {TITLES.map(t => <option key={t} value={t}>{t || '— None —'}</option>)}
+            </select>
+          </div>
           <div>
             <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Display Name</label>
             <input type="text" required value={name} onChange={e => setName(e.target.value)}
@@ -6789,7 +6818,7 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
           <button type="submit" disabled={loading || !name.trim()}
             className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-all flex justify-center items-center text-sm">
-            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Save Name'}
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Save'}
           </button>
         </form>
 

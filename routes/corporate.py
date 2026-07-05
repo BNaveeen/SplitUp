@@ -27,7 +27,7 @@ def _require_org_admin(uid: int, db: Session) -> User:
     u = db.query(User).filter(User.id == uid).first()
     if not u or not u.organisation_id:
         raise HTTPException(status_code=403, detail="Not in an organisation")
-    if u.org_role != "org_admin" and not u.is_admin:
+    if u.org_role != "admin" and not u.is_admin:
         raise HTTPException(status_code=403, detail="Org admin access required")
     return u
 
@@ -192,6 +192,7 @@ def _fmt_member(u: User, org: Organisation) -> dict:
         "name": u.name,
         "email": u.email,
         "org_role": u.org_role or "member",
+        "job_title": u.job_title,
         "department_id": u.department_id,
         "department_name": u.department.name if u.department else None,
         "manager_id": u.manager_id,
@@ -331,6 +332,7 @@ def org_add_existing_member(
     user.department_id   = body.department_id
     user.manager_id      = body.manager_id
     user.org_role        = body.org_role or "member"
+    if body.job_title is not None: user.job_title = body.job_title or None
     db.commit()
     org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
     return _fmt_member(user, org)
@@ -356,6 +358,7 @@ def org_create_member(
         department_id   = body.department_id,
         manager_id      = body.manager_id,
         org_role        = body.org_role or "member",
+        job_title       = body.job_title or None,
     )
     db.add(user); db.commit(); db.refresh(user)
     org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
@@ -380,6 +383,7 @@ def org_update_member(
     if body.manager_id    is not None: user.manager_id    = body.manager_id or None
     if body.org_role      is not None: user.org_role      = body.org_role or "member"
     if body.employee_id   is not None: user.employee_id   = body.employee_id or None
+    if body.job_title     is not None: user.job_title     = body.job_title or None
     db.commit()
     org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
     return _fmt_member(user, org)
@@ -465,6 +469,7 @@ def get_my_org(
         "department": {"id": dept.id, "name": dept.name} if dept else None,
         "manager": {"id": mgr.id, "name": mgr.name, "email": mgr.email} if mgr else None,
         "employee_id": user.employee_id,
+        "org_role": user.org_role or "member",
         "teammates": [{"id": t.id, "name": t.name, "email": t.email, "department_id": t.department_id} for t in teammates],
         "direct_reports": [{"id": r.id, "name": r.name, "email": r.email} for r in direct_reports],
     }
@@ -593,8 +598,8 @@ def submit_report(
         raise HTTPException(status_code=400, detail="Add at least one expense before submitting")
 
     user = db.query(User).filter(User.id == uid).first()
-    # CEO and org_admin roles self-approve — no manager sign-off required
-    SELF_APPROVING_ROLES = {"ceo", "org_admin"}
+    # admin category self-approves — no manager sign-off required
+    SELF_APPROVING_ROLES = {"admin"}
     if user and user.org_role in SELF_APPROVING_ROLES:
         report.status         = "approved"
         report.reviewed_by_id = uid

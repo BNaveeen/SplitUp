@@ -184,6 +184,10 @@ async def startup_event():
         "ALTER TABLE expenses ADD COLUMN report_id INTEGER",
         # org_role on users
         "ALTER TABLE users ADD COLUMN org_role TEXT",
+        # job_title free-text field on users
+        "ALTER TABLE users ADD COLUMN job_title TEXT",
+        # salutation / title (Mr/Mrs/Ms/Dr/Prof/Rev)
+        "ALTER TABLE users ADD COLUMN title TEXT",
     ]:
         mig_db = SessionLocal()
         try:

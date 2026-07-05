@@ -36,7 +36,9 @@ class UserResponse(BaseModel):
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
     employee_id: Optional[str] = None
-    org_role: Optional[str] = None  # null | 'member' | 'manager' | 'org_admin'
+    org_role: Optional[str] = None  # null | 'member' | 'admin'
+    job_title: Optional[str] = None
+    title: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -50,6 +52,7 @@ class TokenResponse(BaseModel):
 
 class UserUpdate(BaseModel):
     name: str
+    title: Optional[str] = None
 
 
 class VerifyEmailRequest(BaseModel):
@@ -327,14 +330,16 @@ class AssignCorporateRequest(BaseModel):
 class OrgMemberUpdate(BaseModel):
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
-    org_role: Optional[str] = None   # 'member' | 'manager' | 'org_admin'
+    org_role: Optional[str] = None   # 'member' | 'admin'
     employee_id: Optional[str] = None
+    job_title: Optional[str] = None
 
 class OrgAddMemberRequest(BaseModel):
     email: str                        # add existing user by email
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
     org_role: str = 'member'
+    job_title: Optional[str] = None
 
 class OrgCreateMemberRequest(BaseModel):
     name: str
@@ -343,6 +348,7 @@ class OrgCreateMemberRequest(BaseModel):
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
     org_role: str = 'member'
+    job_title: Optional[str] = None
 
 class ReportCreate(BaseModel):
     title: str

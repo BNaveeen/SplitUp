@@ -63,6 +63,8 @@ def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.name = update_data.name
+    if update_data.title is not None:
+        user.title = update_data.title or None
     db.commit()
     db.refresh(user)
     return user

@@ -186,8 +186,8 @@ export const fetchUserExpenses = (userId) =>
 export const fetchAllUserBalances = (userId) =>
   apiFetch(`/users/${userId}/all_balances`).catch(() => []);
 
-export const updateUser = (userId, name) =>
-  apiFetch(`/users/${userId}`, { method: 'PUT', body: JSON.stringify({ name }) });
+export const updateUser = (userId, name, title) =>
+  apiFetch(`/users/${userId}`, { method: 'PUT', body: JSON.stringify({ name, title: title || null }) });
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 

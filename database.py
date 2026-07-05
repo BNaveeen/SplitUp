@@ -84,7 +84,9 @@ class User(Base):
     department_id   = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
     manager_id      = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     employee_id     = Column(String, nullable=True)
-    org_role        = Column(String(20), nullable=True)  # null | 'member' | 'manager' | 'org_admin'
+    org_role        = Column(String(20), nullable=True)  # null | 'member' | 'admin'
+    job_title       = Column(String(100), nullable=True)
+    title           = Column(String(10), nullable=True)  # Mr / Mrs / Ms / Dr / Prof / Rev
 
     groups        = relationship("Group", secondary=group_members, back_populates="members")
     expenses_paid = relationship("Expense", foreign_keys="[Expense.payer_id]", back_populates="payer")
