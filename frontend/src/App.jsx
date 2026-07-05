@@ -1110,8 +1110,8 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
     { id: 'activity', label: 'Activity', icon: Activity,   feature: null,         requiredPlan: null },
     { id: 'people',   label: 'People',   icon: Users,      feature: 'people_tab', requiredPlan: 'business' },
     ...(user.organisation_id ? [{ id: 'work', label: 'Work', icon: Briefcase, feature: null, requiredPlan: null }] : []),
-    // Org admin/CEO gets their own dedicated Company tab — entirely separate from platform admin
-    ...(user.org_role === 'org_admin' || user.org_role === 'ceo' ? [{ id: 'company', label: 'Company', icon: Building2, feature: null, requiredPlan: null }] : []),
+    // Org admin gets their own dedicated Company tab — entirely separate from platform admin
+    ...(user.org_role === 'admin' ? [{ id: 'company', label: 'Company', icon: Building2, feature: null, requiredPlan: null }] : []),
   ]
 
   return (
@@ -1357,7 +1357,7 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
                 {activeTab === 'work' && (
                   <WorkTab currentUser={user} />
                 )}
-                {activeTab === 'company' && (user.org_role === 'org_admin' || user.org_role === 'ceo') && (
+                {activeTab === 'company' && user.org_role === 'admin' && (
                   <OrgAdminPage currentUser={user} />
                 )}
               </motion.div>
@@ -3397,9 +3397,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                                           } catch (err) { alert(err.message) }
                                         }} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
                                           <option value="member">Member</option>
-                                          <option value="manager">Manager</option>
-                                          <option value="org_admin">HR Admin</option>
-                                          <option value="ceo">CEO</option>
+                                          <option value="admin">Admin</option>
                                         </select>
                                       </div>
                                       <div>
@@ -4567,13 +4565,33 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
 
 // ── Org Admin Panel ───────────────────────────────────────────────────────────
 const ORG_ROLE_META = {
-  member:    { label: 'Member',    color: 'text-slate-400 bg-slate-800/60 border-slate-700' },
-  manager:   { label: 'Manager',   color: 'text-blue-300 bg-blue-500/10 border-blue-500/25' },
-  org_admin: { label: 'HR Admin',  color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
-  ceo:       { label: 'CEO',       color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' },
+  member: { label: 'Member', color: 'text-slate-400 bg-slate-800/60 border-slate-700' },
+  admin:  { label: 'Admin',  color: 'text-violet-300 bg-violet-500/10 border-violet-500/25' },
 }
-// Roles that self-approve expense reports (no manager needed)
-const SELF_APPROVING_ROLES = new Set(['ceo', 'org_admin'])
+// Admins self-approve expense reports (no manager sign-off needed)
+const SELF_APPROVING_ROLES = new Set(['admin'])
+
+// Inline job-title editor — click to edit, blur/enter to save
+function JobTitleInput({ memberId, value, onSave }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft]     = useState(value)
+  const save = async () => {
+    setEditing(false)
+    if (draft !== value) await onSave(draft)
+  }
+  if (!editing) return (
+    <button onClick={() => { setDraft(value); setEditing(true) }}
+      className="w-full text-left bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 hover:border-violet-500/50 transition-colors truncate min-h-[30px]">
+      {value || <span className="text-slate-600 italic">Add title…</span>}
+    </button>
+  )
+  return (
+    <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+      onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setDraft(value); setEditing(false) } }}
+      placeholder="e.g. Finance Director"
+      className="w-full bg-slate-900/60 border border-violet-500/50 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none" />
+  )
+}
 
 // ── OrgAdminPage: dedicated company admin dashboard (separate Company tab) ────
 function OrgAdminPage({ currentUser }) {
@@ -4621,8 +4639,8 @@ function OrgAdminPanel({ currentUser }) {
 
   const pendingCount   = allReports.filter(r => r.status === 'submitted').length
   const approvedCount  = allReports.filter(r => r.status === 'approved').length
-  const orgAdmins      = members.filter(m => m.org_role === 'org_admin' || m.org_role === 'ceo')
-  const nonAdminMembers = members.filter(m => m.org_role !== 'org_admin' && m.org_role !== 'ceo')
+  const orgAdmins      = members.filter(m => m.org_role === 'admin')
+  const nonAdminMembers = members.filter(m => m.org_role !== 'admin')
 
   const handleReview = async () => {
     if (!reviewingReport) return
@@ -4659,7 +4677,7 @@ function OrgAdminPanel({ currentUser }) {
             </div>
           </div>
           <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30">
-            {(currentUser.org_role === 'ceo' ? ORG_ROLE_META.ceo : ORG_ROLE_META.org_admin).label}
+            {ORG_ROLE_META.admin.label}
           </span>
         </div>
         {/* Stats row */}
@@ -4742,7 +4760,7 @@ function OrgAdminPanel({ currentUser }) {
                   {nonAdminMembers.map(m => (
                     <button key={m.id} onClick={async () => {
                       if (!confirm(`Make ${m.name} an admin? They'll see the Company tab and can manage this organisation.`)) return
-                      try { await orgUpdateMember(m.id, { org_role: 'org_admin' }); await reload() } catch (e) { alert(e.message) }
+                      try { await orgUpdateMember(m.id, { org_role: 'admin' }); await reload() } catch (e) { alert(e.message) }
                     }} className="flex items-center gap-1.5 bg-slate-700/60 hover:bg-violet-500/15 border border-slate-600/50 hover:border-violet-500/30 rounded-full px-2.5 py-1 transition-all group">
                       <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
                       <span className="text-xs text-slate-400 group-hover:text-violet-300 transition-colors">{m.name}</span>
@@ -4771,6 +4789,7 @@ function OrgAdminPanel({ currentUser }) {
           ) : (
             members.map(m => {
               const roleMeta = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
+              const isAdmin = m.org_role === 'admin'
               return (
                 <div key={m.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3.5 space-y-3">
                   <div className="flex items-center justify-between gap-2">
@@ -4780,7 +4799,7 @@ function OrgAdminPanel({ currentUser }) {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-slate-100 truncate">{m.name}</p>
-                        <p className="text-[11px] text-slate-500 truncate">{m.email}</p>
+                        <p className="text-[11px] text-slate-500 truncate">{m.job_title || m.email}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -4795,18 +4814,38 @@ function OrgAdminPanel({ currentUser }) {
                       )}
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Job Title — free text, admin-only */}
                     <div>
-                      <p className="text-[10px] text-slate-600 mb-1">Role</p>
-                      <select value={m.org_role || 'member'} onChange={async (e) => {
-                        try { await orgUpdateMember(m.id, { org_role: e.target.value }); setMembers(p => p.map(x => x.id === m.id ? { ...x, org_role: e.target.value } : x)) } catch (err) { alert(err.message) }
-                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
-                        <option value="member">Member</option>
-                        <option value="manager">Manager</option>
-                        <option value="org_admin">HR Admin</option>
-                        <option value="ceo">CEO</option>
-                      </select>
+                      <p className="text-[10px] text-slate-600 mb-1">Job Title</p>
+                      <JobTitleInput memberId={m.id} value={m.job_title || ''} onSave={async (val) => {
+                        try { await orgUpdateMember(m.id, { job_title: val }); setMembers(p => p.map(x => x.id === m.id ? { ...x, job_title: val } : x)) } catch (err) { alert(err.message) }
+                      }} />
                     </div>
+                    {/* Category — Admin or Member */}
+                    <div>
+                      <p className="text-[10px] text-slate-600 mb-1">Category</p>
+                      {m.id === currentUser.id ? (
+                        <span className={`inline-flex items-center text-[10px] font-bold px-2 py-1.5 rounded-lg border ${roleMeta.color}`}>{roleMeta.label} (you)</span>
+                      ) : (
+                        <div className="flex rounded-lg overflow-hidden border border-slate-700">
+                          <button onClick={async () => {
+                            if (isAdmin) return
+                            try { await orgUpdateMember(m.id, { org_role: 'admin' }); setMembers(p => p.map(x => x.id === m.id ? { ...x, org_role: 'admin' } : x)) } catch (err) { alert(err.message) }
+                          }} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${isAdmin ? 'bg-violet-500/20 text-violet-300' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>
+                            Admin
+                          </button>
+                          <button onClick={async () => {
+                            if (!isAdmin) return
+                            try { await orgUpdateMember(m.id, { org_role: 'member' }); setMembers(p => p.map(x => x.id === m.id ? { ...x, org_role: 'member' } : x)) } catch (err) { alert(err.message) }
+                          }} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${!isAdmin ? 'bg-slate-700 text-slate-300' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>
+                            Member
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
                       <p className="text-[10px] text-slate-600 mb-1">Department</p>
                       <select value={m.department_id || ''} onChange={async (e) => {
@@ -4824,7 +4863,7 @@ function OrgAdminPanel({ currentUser }) {
                         try { await orgUpdateMember(m.id, { manager_id: mgr }); setMembers(p => p.map(x => x.id === m.id ? { ...x, manager_id: mgr } : x)) } catch (err) { alert(err.message) }
                       }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
                         <option value="">None</option>
-                        {members.filter(x => x.id !== m.id && (x.org_role === 'manager' || x.org_role === 'org_admin' || x.org_role === 'ceo')).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        {members.filter(x => x.id !== m.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
                       </select>
                     </div>
                   </div>
@@ -4970,16 +5009,19 @@ function OrgAdminPanel({ currentUser }) {
 }
 
 function OrgAddMemberModal({ depts, members, onClose, onAdded }) {
-  const [email, setEmail]   = useState('')
-  const [deptId, setDeptId] = useState('')
-  const [mgr, setMgr]       = useState('')
-  const [role, setRole]     = useState('member')
+  const [email, setEmail]     = useState('')
+  const [jobTitle, setTitle]  = useState('')
+  const [deptId, setDeptId]   = useState('')
+  const [mgr, setMgr]         = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError]   = useState('')
+  const [error, setError]     = useState('')
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('')
-    try { await orgAddMember({ email: email.trim(), department_id: deptId ? parseInt(deptId) : null, manager_id: mgr ? parseInt(mgr) : null, org_role: role }); onAdded() }
-    catch (err) { setError(err.message) } finally { setLoading(false) }
+    try {
+      await orgAddMember({ email: email.trim(), job_title: jobTitle.trim() || null, department_id: deptId ? parseInt(deptId) : null, manager_id: mgr ? parseInt(mgr) : null, org_role: isAdmin ? 'admin' : 'member' })
+      onAdded()
+    } catch (err) { setError(err.message) } finally { setLoading(false) }
   }
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -4993,15 +5035,9 @@ function OrgAddMemberModal({ depts, members, onClose, onAdded }) {
         <form onSubmit={handleSubmit} className="p-6 space-y-3">
           <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="Their account email"
             className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500" />
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <p className="text-[10px] text-slate-500 mb-1">Role</p>
-              <select value={role} onChange={e => setRole(e.target.value)} className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-indigo-500">
-                <option value="member">Member</option>
-                <option value="manager">Manager</option>
-                <option value="org_admin">Org Admin</option>
-              </select>
-            </div>
+          <input value={jobTitle} onChange={e => setTitle(e.target.value)} placeholder="Job title (e.g. Finance Director)"
+            className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500" />
+          <div className="grid grid-cols-2 gap-2">
             <div>
               <p className="text-[10px] text-slate-500 mb-1">Department</p>
               <select value={deptId} onChange={e => setDeptId(e.target.value)} className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-indigo-500">
@@ -5013,8 +5049,17 @@ function OrgAddMemberModal({ depts, members, onClose, onAdded }) {
               <p className="text-[10px] text-slate-500 mb-1">Reports to</p>
               <select value={mgr} onChange={e => setMgr(e.target.value)} className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-indigo-500">
                 <option value="">None</option>
-                {members.filter(m => m.org_role === 'manager' || m.org_role === 'org_admin').map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] text-slate-500 mb-1.5">Category</p>
+            <div className="flex rounded-xl overflow-hidden border border-slate-700">
+              <button type="button" onClick={() => setIsAdmin(false)}
+                className={`flex-1 py-2 text-xs font-bold transition-colors ${!isAdmin ? 'bg-slate-700 text-slate-100' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>Member</button>
+              <button type="button" onClick={() => setIsAdmin(true)}
+                className={`flex-1 py-2 text-xs font-bold transition-colors ${isAdmin ? 'bg-violet-500/20 text-violet-300' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>Admin</button>
             </div>
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -5031,18 +5076,21 @@ function OrgAddMemberModal({ depts, members, onClose, onAdded }) {
 }
 
 function OrgCreateMemberModal({ depts, members, onClose, onCreated }) {
-  const [name, setName]     = useState('')
-  const [email, setEmail]   = useState('')
-  const [pass, setPass]     = useState('')
-  const [deptId, setDeptId] = useState('')
-  const [mgr, setMgr]       = useState('')
-  const [role, setRole]     = useState('member')
+  const [name, setName]       = useState('')
+  const [email, setEmail]     = useState('')
+  const [pass, setPass]       = useState('')
+  const [jobTitle, setTitle]  = useState('')
+  const [deptId, setDeptId]   = useState('')
+  const [mgr, setMgr]         = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError]   = useState('')
+  const [error, setError]     = useState('')
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('')
-    try { await orgCreateMember({ name: name.trim(), email: email.trim(), password: pass, department_id: deptId ? parseInt(deptId) : null, manager_id: mgr ? parseInt(mgr) : null, org_role: role }); onCreated() }
-    catch (err) { setError(err.message) } finally { setLoading(false) }
+    try {
+      await orgCreateMember({ name: name.trim(), email: email.trim(), password: pass, job_title: jobTitle.trim() || null, department_id: deptId ? parseInt(deptId) : null, manager_id: mgr ? parseInt(mgr) : null, org_role: isAdmin ? 'admin' : 'member' })
+      onCreated()
+    } catch (err) { setError(err.message) } finally { setLoading(false) }
   }
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -5060,15 +5108,9 @@ function OrgCreateMemberModal({ depts, members, onClose, onCreated }) {
             className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 text-slate-100 placeholder-slate-500" />
           <input type="password" required value={pass} onChange={e => setPass(e.target.value)} placeholder="Password (min 8 chars)"
             className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 text-slate-100 placeholder-slate-500" />
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <p className="text-[10px] text-slate-500 mb-1">Role</p>
-              <select value={role} onChange={e => setRole(e.target.value)} className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-emerald-500">
-                <option value="member">Member</option>
-                <option value="manager">Manager</option>
-                <option value="org_admin">Org Admin</option>
-              </select>
-            </div>
+          <input value={jobTitle} onChange={e => setTitle(e.target.value)} placeholder="Job title (e.g. Senior Engineer)"
+            className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 text-slate-100 placeholder-slate-500" />
+          <div className="grid grid-cols-2 gap-2">
             <div>
               <p className="text-[10px] text-slate-500 mb-1">Department</p>
               <select value={deptId} onChange={e => setDeptId(e.target.value)} className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-emerald-500">
@@ -5080,8 +5122,17 @@ function OrgCreateMemberModal({ depts, members, onClose, onCreated }) {
               <p className="text-[10px] text-slate-500 mb-1">Reports to</p>
               <select value={mgr} onChange={e => setMgr(e.target.value)} className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-emerald-500">
                 <option value="">None</option>
-                {members.filter(m => m.org_role === 'manager' || m.org_role === 'org_admin').map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] text-slate-500 mb-1.5">Category</p>
+            <div className="flex rounded-xl overflow-hidden border border-slate-700">
+              <button type="button" onClick={() => setIsAdmin(false)}
+                className={`flex-1 py-2 text-xs font-bold transition-colors ${!isAdmin ? 'bg-slate-700 text-slate-100' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>Member</button>
+              <button type="button" onClick={() => setIsAdmin(true)}
+                className={`flex-1 py-2 text-xs font-bold transition-colors ${isAdmin ? 'bg-violet-500/20 text-violet-300' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>Admin</button>
             </div>
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
