@@ -3397,7 +3397,8 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                                         }} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
                                           <option value="member">Member</option>
                                           <option value="manager">Manager</option>
-                                          <option value="org_admin">Org Admin</option>
+                                          <option value="org_admin">HR Admin</option>
+                                          <option value="ceo">CEO</option>
                                         </select>
                                       </div>
                                       <div>
@@ -4567,8 +4568,11 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
 const ORG_ROLE_META = {
   member:    { label: 'Member',    color: 'text-slate-400 bg-slate-800/60 border-slate-700' },
   manager:   { label: 'Manager',   color: 'text-blue-300 bg-blue-500/10 border-blue-500/25' },
-  org_admin: { label: 'Org Admin', color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
+  org_admin: { label: 'HR Admin',  color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
+  ceo:       { label: 'CEO',       color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' },
 }
+// Roles that self-approve expense reports (no manager needed)
+const SELF_APPROVING_ROLES = new Set(['ceo', 'org_admin'])
 
 // ── OrgAdminPage: full-page company admin dashboard (separate Company tab) ────
 function OrgAdminPage({ currentUser }) {
@@ -4719,7 +4723,8 @@ function OrgAdminPanel({ currentUser }) {
                       }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
                         <option value="member">Member</option>
                         <option value="manager">Manager</option>
-                        <option value="org_admin">Org Admin</option>
+                        <option value="org_admin">HR Admin</option>
+                        <option value="ceo">CEO</option>
                       </select>
                     </div>
                     <div>
@@ -5248,6 +5253,7 @@ function WorkTab({ currentUser }) {
         {openReport && (
           <ReportDetailModal
             report={openReport}
+            currentUser={currentUser}
             onClose={async () => { setOpenReport(null); await reload() }}
           />
         )}
@@ -5366,14 +5372,15 @@ const WORK_CATEGORIES = [
   { id: 'other',         label: 'Other',           icon: '📦' },
 ]
 
-function ReportDetailModal({ report: initialReport, onClose }) {
+function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
   const [report, setReport]             = useState(initialReport)
   const [showAddItem, setShowAddItem]   = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [actionError, setActionError]   = useState('')
 
-  const isDraft = report.status === 'draft'
+  const isDraft    = report.status === 'draft'
+  const selfApproves = currentUser && SELF_APPROVING_ROLES.has(currentUser.org_role)
 
   const STATUS_COLORS = {
     draft:      'text-slate-400 bg-slate-800 border-slate-600',
@@ -5527,13 +5534,30 @@ function ReportDetailModal({ report: initialReport, onClose }) {
       {(isDraft || report.status === 'rejected') && (
         <div className="absolute bottom-0 left-0 right-0 px-4 py-4 border-t border-slate-800 space-y-2 bg-slate-900">
           {isDraft && (
-            <button onClick={handleSubmit} disabled={submitLoading || report.expenses.length === 0}
-              className="w-full py-3.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white font-bold rounded-2xl transition-colors flex justify-center items-center gap-2">
-              {submitLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Send className="h-4 w-4" /> Submit for Approval</>}
-            </button>
-          )}
-          {report.expenses.length === 0 && isDraft && (
-            <p className="text-center text-xs text-slate-600">Add at least one expense item before submitting</p>
+            <>
+              {selfApproves && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl mb-1">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  <p className="text-xs text-emerald-300 font-medium">No approval required — your role auto-approves</p>
+                </div>
+              )}
+              <button onClick={handleSubmit} disabled={submitLoading || report.expenses.length === 0}
+                className={`w-full py-3.5 disabled:opacity-40 text-white font-bold rounded-2xl transition-colors flex justify-center items-center gap-2 ${
+                  selfApproves
+                    ? 'bg-emerald-500 hover:bg-emerald-600'
+                    : 'bg-indigo-500 hover:bg-indigo-600'
+                }`}>
+                {submitLoading
+                  ? <Loader2 className="animate-spin h-4 w-4" />
+                  : selfApproves
+                    ? <><CheckCircle2 className="h-4 w-4" /> Approve & Submit</>
+                    : <><Send className="h-4 w-4" /> Submit for Approval</>
+                }
+              </button>
+              {report.expenses.length === 0 && (
+                <p className="text-center text-xs text-slate-600">Add at least one expense item before submitting</p>
+              )}
+            </>
           )}
           <button onClick={handleDelete} disabled={deleteLoading}
             className="w-full py-2.5 text-red-400 hover:text-red-300 text-sm font-semibold rounded-2xl transition-colors flex justify-center items-center gap-2 hover:bg-red-500/10">

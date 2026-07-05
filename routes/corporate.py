@@ -526,7 +526,18 @@ def submit_report(
         raise HTTPException(status_code=400, detail="Only draft reports can be submitted")
     if not report.expenses:
         raise HTTPException(status_code=400, detail="Add at least one expense before submitting")
-    report.status     = "submitted"
+
+    user = db.query(User).filter(User.id == uid).first()
+    # CEO and org_admin roles self-approve — no manager sign-off required
+    SELF_APPROVING_ROLES = {"ceo", "org_admin"}
+    if user and user.org_role in SELF_APPROVING_ROLES:
+        report.status         = "approved"
+        report.reviewed_by_id = uid
+        report.reviewed_at    = datetime.utcnow()
+        report.review_notes   = "Auto-approved: senior role"
+    else:
+        report.status = "submitted"
+
     report.updated_at = datetime.utcnow()
     db.commit()
     return _fmt_report(report)
