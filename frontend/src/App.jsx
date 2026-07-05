@@ -4812,7 +4812,7 @@ function OrgAddMemberModal({ depts, members, onClose, onAdded }) {
   }
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
       <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }}
         className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
@@ -4875,7 +4875,7 @@ function OrgCreateMemberModal({ depts, members, onClose, onCreated }) {
   }
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
       <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }}
         className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
@@ -5287,7 +5287,7 @@ function CreateReportModal({ onClose, onCreated }) {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
       <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }}
         className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
@@ -5358,19 +5358,11 @@ const WORK_CATEGORIES = [
 ]
 
 function ReportDetailModal({ report: initialReport, onClose }) {
-  const [report, setReport]       = useState(initialReport)
-  const [showAddForm, setShowAdd] = useState(false)
+  const [report, setReport]             = useState(initialReport)
+  const [showAddItem, setShowAddItem]   = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
-  const [actionError, setActionError]     = useState('')
-
-  // Add item form state
-  const [itemDesc, setItemDesc]         = useState('')
-  const [itemDate, setItemDate]         = useState(todayISO())
-  const [itemAmount, setItemAmount]     = useState('')
-  const [itemCategory, setItemCategory] = useState('other')
-  const [itemLoading, setItemLoading]   = useState(false)
-  const [itemError, setItemError]       = useState('')
+  const [actionError, setActionError]   = useState('')
 
   const isDraft = report.status === 'draft'
 
@@ -5382,27 +5374,6 @@ function ReportDetailModal({ report: initialReport, onClose }) {
     reimbursed: 'text-purple-300 bg-purple-500/10 border-purple-500/30',
   }
   const STATUS_LABELS = { draft:'Draft', submitted:'Submitted', approved:'Approved', rejected:'Rejected', reimbursed:'Reimbursed' }
-
-  const handleAddItem = async (e) => {
-    e.preventDefault()
-    if (!itemDesc.trim()) { setItemError('Description is required'); return }
-    const amt = parseFloat(itemAmount)
-    if (!amt || amt <= 0) { setItemError('Enter a valid amount'); return }
-    setItemLoading(true); setItemError('')
-    try {
-      const updated = await addReportItem(report.id, {
-        description: itemDesc.trim(),
-        amount: amt,
-        date: itemDate || null,
-        category: itemCategory,
-        currency: report.currency,
-      })
-      setReport(updated)
-      setItemDesc(''); setItemAmount(''); setItemDate(todayISO()); setItemCategory('other')
-      setShowAdd(false)
-    } catch (err) { setItemError(err.message) }
-    finally { setItemLoading(false) }
-  }
 
   const handleRemoveItem = async (expenseId) => {
     try {
@@ -5449,7 +5420,7 @@ function ReportDetailModal({ report: initialReport, onClose }) {
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-36">
 
         {/* Summary card */}
         <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 space-y-2">
@@ -5487,106 +5458,54 @@ function ReportDetailModal({ report: initialReport, onClose }) {
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Expense Items ({report.expenses.length})
             </p>
-            {isDraft && !showAddForm && (
-              <button onClick={() => setShowAdd(true)}
+            {isDraft && (
+              <button onClick={() => setShowAddItem(true)}
                 className="flex items-center gap-1 text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors">
                 <Plus className="h-3.5 w-3.5" /> Add Item
               </button>
             )}
           </div>
 
-          {report.expenses.length === 0 && !showAddForm && (
-            <div className="flex flex-col items-center justify-center py-10 text-center bg-slate-800/40 border border-dashed border-slate-700 rounded-2xl">
+          {report.expenses.length === 0 ? (
+            <button onClick={() => isDraft && setShowAddItem(true)}
+              className={`w-full flex flex-col items-center justify-center py-10 text-center bg-slate-800/40 border border-dashed border-slate-700 rounded-2xl ${isDraft ? 'hover:border-indigo-500/40 hover:bg-slate-800/60 transition-colors cursor-pointer' : 'cursor-default'}`}>
               <Receipt className="h-8 w-8 text-slate-700 mb-2" />
               <p className="text-sm text-slate-500 font-medium">No expense items yet</p>
-              {isDraft && <p className="text-xs text-slate-600 mt-1">Tap "Add Item" to add your first expense</p>}
+              {isDraft && <p className="text-xs text-indigo-500 mt-1 font-semibold">+ Tap to add first item</p>}
+            </button>
+          ) : (
+            <div className="space-y-2">
+              {report.expenses.map((e) => {
+                const cat = catMap[e.category] || catMap['other']
+                return (
+                  <motion.div key={e.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                    className="bg-slate-800/60 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      <span className="text-lg shrink-0">{cat?.icon || '📦'}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-100 truncate">{e.description}</p>
+                        <p className="text-xs text-slate-500">
+                          {cat?.label || 'Other'}
+                          {e.date ? ` · ${new Date(e.date).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}` : ''}
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-slate-200 shrink-0">{e.currency || report.currency} {Number(e.amount).toFixed(2)}</span>
+                      {isDraft && (
+                        <button onClick={() => handleRemoveItem(e.id)}
+                          className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {e.receipt_image && (
+                      <div className="px-3 pb-2.5">
+                        <img src={e.receipt_image} alt="receipt" className="w-full max-h-32 object-cover rounded-lg border border-slate-700/50" />
+                      </div>
+                    )}
+                  </motion.div>
+                )
+              })}
             </div>
-          )}
-
-          <div className="space-y-2">
-            {report.expenses.map((e) => {
-              const cat = catMap[e.category] || catMap['other']
-              return (
-                <motion.div key={e.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                  className="flex items-center gap-3 bg-slate-800/60 border border-slate-700/40 rounded-xl px-3 py-2.5">
-                  <span className="text-lg shrink-0">{cat?.icon || '📦'}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-100 truncate">{e.description}</p>
-                    <p className="text-xs text-slate-500">
-                      {cat?.label || 'Other'}
-                      {e.date ? ` · ${new Date(e.date).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-sm font-bold text-slate-200 shrink-0">{e.currency || report.currency} {Number(e.amount).toFixed(2)}</span>
-                  {isDraft && (
-                    <button onClick={() => handleRemoveItem(e.id)}
-                      className="p-1 text-slate-600 hover:text-red-400 transition-colors shrink-0">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </motion.div>
-              )
-            })}
-          </div>
-
-          {/* Inline add form */}
-          {isDraft && showAddForm && (
-            <motion.form initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              onSubmit={handleAddItem}
-              className="mt-3 bg-slate-800/80 border border-indigo-500/30 rounded-2xl p-4 space-y-3">
-              <p className="text-xs font-bold text-indigo-300 uppercase tracking-wider">New Expense Item</p>
-
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Description *</label>
-                <input type="text" value={itemDesc} onChange={e => setItemDesc(e.target.value)} autoFocus
-                  className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
-                  placeholder="e.g. Taxi to Heathrow" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Date</label>
-                  <input type="date" value={itemDate} onChange={e => setItemDate(e.target.value)}
-                    className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 mb-1 block">Amount ({report.currency})</label>
-                  <input type="number" step="0.01" min="0.01" value={itemAmount} onChange={e => setItemAmount(e.target.value)}
-                    className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
-                    placeholder="0.00" />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-400 mb-1.5 block">Category</label>
-                <div className="grid grid-cols-4 gap-1.5">
-                  {WORK_CATEGORIES.map(c => (
-                    <button key={c.id} type="button" onClick={() => setItemCategory(c.id)}
-                      className={`flex flex-col items-center gap-0.5 py-2 rounded-xl border text-[10px] font-semibold transition-all ${
-                        itemCategory === c.id
-                          ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
-                          : 'bg-slate-900/50 border-slate-700 text-slate-500 hover:text-slate-300'
-                      }`}>
-                      <span className="text-base leading-none">{c.icon}</span>
-                      <span className="truncate w-full text-center px-0.5">{c.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {itemError && <p className="text-red-400 text-xs">{itemError}</p>}
-
-              <div className="flex gap-2">
-                <button type="submit" disabled={itemLoading}
-                  className="flex-1 py-2.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors flex justify-center items-center gap-1.5">
-                  {itemLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Check className="h-4 w-4" /> Add Item</>}
-                </button>
-                <button type="button" onClick={() => { setShowAdd(false); setItemError('') }}
-                  className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-bold rounded-xl transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </motion.form>
           )}
         </div>
 
@@ -5597,7 +5516,7 @@ function ReportDetailModal({ report: initialReport, onClose }) {
 
       {/* Footer actions */}
       {(isDraft || report.status === 'rejected') && (
-        <div className="shrink-0 px-4 py-4 border-t border-slate-800 space-y-2 bg-slate-900">
+        <div className="absolute bottom-0 left-0 right-0 px-4 py-4 border-t border-slate-800 space-y-2 bg-slate-900">
           {isDraft && (
             <button onClick={handleSubmit} disabled={submitLoading || report.expenses.length === 0}
               className="w-full py-3.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white font-bold rounded-2xl transition-colors flex justify-center items-center gap-2">
@@ -5613,6 +5532,147 @@ function ReportDetailModal({ report: initialReport, onClose }) {
           </button>
         </div>
       )}
+
+      {/* Add Item Modal */}
+      <AnimatePresence>
+        {showAddItem && (
+          <AddItemModal
+            reportId={report.id}
+            currency={report.currency}
+            onClose={() => setShowAddItem(false)}
+            onAdded={(updated) => { setReport(updated); setShowAddItem(false) }}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
+}
+
+function AddItemModal({ reportId, currency, onClose, onAdded }) {
+  const [desc, setDesc]             = useState('')
+  const [date, setDate]             = useState(todayISO())
+  const [amount, setAmount]         = useState('')
+  const [category, setCategory]     = useState('other')
+  const [receipt, setReceipt]       = useState(null)  // base64
+  const [receiptName, setReceiptName] = useState('')
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState('')
+  const fileRef = useRef(null)
+
+  const handleImage = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setReceiptName(file.name)
+    const reader = new FileReader()
+    reader.onload = (ev) => setReceipt(ev.target.result)
+    reader.readAsDataURL(file)
+  }
+
+  const handleSave = async (e) => {
+    e.preventDefault()
+    if (!desc.trim()) { setError('Description is required'); return }
+    const amt = parseFloat(amount)
+    if (!amt || amt <= 0) { setError('Enter a valid amount'); return }
+    setLoading(true); setError('')
+    try {
+      const updated = await addReportItem(reportId, {
+        description: desc.trim(),
+        amount: amt,
+        date: date || null,
+        category,
+        currency,
+        receipt_image: receipt || null,
+      })
+      onAdded(updated)
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-sm">
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50 shrink-0">
+          <h3 className="font-bold text-white flex items-center gap-2">
+            <Receipt className="h-4 w-4 text-indigo-400" /> Add Expense Item
+          </h3>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="overflow-y-auto p-5 space-y-4">
+          {/* Description */}
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Description *</label>
+            <input type="text" value={desc} onChange={e => setDesc(e.target.value)} autoFocus
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+              placeholder="e.g. Taxi to Heathrow" />
+          </div>
+
+          {/* Date + Amount */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Date</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Amount ({currency})</label>
+              <input type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(e.target.value)}
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+                placeholder="0.00" />
+            </div>
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Category</label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {WORK_CATEGORIES.map(c => (
+                <button key={c.id} type="button" onClick={() => setCategory(c.id)}
+                  className={`flex flex-col items-center gap-0.5 py-2 rounded-xl border text-[10px] font-semibold transition-all ${
+                    category === c.id
+                      ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                      : 'bg-slate-900/50 border-slate-700 text-slate-500 hover:text-slate-300'
+                  }`}>
+                  <span className="text-base leading-none">{c.icon}</span>
+                  <span className="truncate w-full text-center px-0.5">{c.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Receipt upload */}
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Receipt / Invoice</label>
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleImage} className="hidden" />
+            {receipt ? (
+              <div className="relative">
+                <img src={receipt} alt="receipt preview" className="w-full max-h-36 object-cover rounded-xl border border-slate-700/50" />
+                <button type="button" onClick={() => { setReceipt(null); setReceiptName(''); fileRef.current.value = '' }}
+                  className="absolute top-2 right-2 p-1 bg-slate-900/80 hover:bg-red-500/80 text-white rounded-full transition-colors">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                <p className="text-[10px] text-slate-500 mt-1 truncate">{receiptName}</p>
+              </div>
+            ) : (
+              <button type="button" onClick={() => fileRef.current.click()}
+                className="w-full flex items-center justify-center gap-2 py-3.5 border-2 border-dashed border-slate-700 hover:border-indigo-500/50 rounded-xl text-sm text-slate-500 hover:text-indigo-400 transition-colors">
+                <Receipt className="h-4 w-4" /> Upload receipt or invoice
+              </button>
+            )}
+          </div>
+
+          {error && <p className="text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+
+          <button type="submit" disabled={loading}
+            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2">
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Check className="h-4 w-4" /> Save Item</>}
+          </button>
+        </form>
+      </motion.div>
     </motion.div>
   )
 }
@@ -5631,7 +5691,7 @@ function ReviewModal({ report, action, onClose, onSubmit }) {
   const isApprove = action === 'approve'
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
       <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
         className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
