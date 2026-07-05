@@ -385,6 +385,9 @@ export const orgUpdateMember   = (userId, data) => apiFetch(`/my/org/members/${u
 export const orgRemoveMember   = (userId) => apiFetch(`/my/org/members/${userId}`, { method: 'DELETE' })
 export const orgCreateDept     = (name) => apiFetch('/my/org/departments', { method: 'POST', body: JSON.stringify({ name }) })
 export const orgDeleteDept     = (deptId) => apiFetch(`/my/org/departments/${deptId}`, { method: 'DELETE' })
+export const orgApproveReport  = (reportId, notes) => apiFetch(`/my/org/reports/${reportId}/approve`, { method: 'POST', body: JSON.stringify({ notes: notes || null }) })
+export const orgRejectReport   = (reportId, notes) => apiFetch(`/my/org/reports/${reportId}/reject`, { method: 'POST', body: JSON.stringify({ notes: notes || null }) })
+export const orgReimburseReport = (reportId) => apiFetch(`/my/org/reports/${reportId}/reimburse`, { method: 'POST', body: JSON.stringify({}) })
 
 // ── Corporate: My Org ─────────────────────────────────────────────────────────
 

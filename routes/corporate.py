@@ -250,6 +250,74 @@ def org_all_reports(
     return [_fmt_report(r) for r in reports]
 
 
+@router.post("/my/org/reports/{report_id}/approve")
+def org_approve_report(
+    report_id: int,
+    body: ReportReviewRequest,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    report = db.query(ExpenseReport).filter(
+        ExpenseReport.id == report_id,
+        ExpenseReport.organisation_id == admin.organisation_id,
+        ExpenseReport.status == "submitted",
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found or not submitted")
+    report.status         = "approved"
+    report.reviewed_by_id = uid
+    report.reviewed_at    = datetime.utcnow()
+    report.review_notes   = body.notes
+    report.updated_at     = datetime.utcnow()
+    db.commit()
+    return _fmt_report(report)
+
+
+@router.post("/my/org/reports/{report_id}/reject")
+def org_reject_report(
+    report_id: int,
+    body: ReportReviewRequest,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    report = db.query(ExpenseReport).filter(
+        ExpenseReport.id == report_id,
+        ExpenseReport.organisation_id == admin.organisation_id,
+        ExpenseReport.status == "submitted",
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found or not submitted")
+    report.status         = "rejected"
+    report.reviewed_by_id = uid
+    report.reviewed_at    = datetime.utcnow()
+    report.review_notes   = body.notes
+    report.updated_at     = datetime.utcnow()
+    db.commit()
+    return _fmt_report(report)
+
+
+@router.post("/my/org/reports/{report_id}/reimburse")
+def org_reimburse_report(
+    report_id: int,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    report = db.query(ExpenseReport).filter(
+        ExpenseReport.id == report_id,
+        ExpenseReport.organisation_id == admin.organisation_id,
+        ExpenseReport.status == "approved",
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found or not approved")
+    report.status     = "reimbursed"
+    report.updated_at = datetime.utcnow()
+    db.commit()
+    return _fmt_report(report)
+
+
 @router.post("/my/org/members/add")
 def org_add_existing_member(
     body: OrgAddMemberRequest,

@@ -7,7 +7,8 @@ import {
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
   KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText,
-  Moon, Sun, Briefcase, Building2, ClipboardList, ChevronDown, AlertCircle, Clock, Inbox
+  Moon, Sun, Briefcase, Building2, ClipboardList, ChevronDown, AlertCircle, Clock, Inbox,
+  LayoutDashboard
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -25,7 +26,7 @@ import {
   adminGetSubscriptions, adminSetUserPlan, adminGetFeatureFlags, adminUpdateFeatureFlag,
   adminListOrgs, adminCreateOrg, adminDeleteOrg, adminCreateDept, adminDeleteDept, adminAssignCorporate,
   orgListMembers, orgStats, orgAllReports, orgAddMember, orgCreateMember, orgUpdateMember, orgRemoveMember,
-  orgCreateDept, orgDeleteDept,
+  orgCreateDept, orgDeleteDept, orgApproveReport, orgRejectReport, orgReimburseReport,
   fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
   addExpenseToReport, removeExpenseFromReport, addReportItem, deleteReportItem,
   fetchMyApprovals, approveReport, rejectReport, reimburseReport,
@@ -4574,20 +4575,10 @@ const ORG_ROLE_META = {
 // Roles that self-approve expense reports (no manager needed)
 const SELF_APPROVING_ROLES = new Set(['ceo', 'org_admin'])
 
-// ── OrgAdminPage: full-page company admin dashboard (separate Company tab) ────
+// ── OrgAdminPage: dedicated company admin dashboard (separate Company tab) ────
 function OrgAdminPage({ currentUser }) {
   return (
     <div className="pt-4 pb-4 space-y-4">
-      {/* Company Admin banner — visually distinct from platform admin */}
-      <div className="bg-gradient-to-r from-violet-500/10 to-indigo-500/10 border border-violet-500/20 rounded-2xl p-4 flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
-          <Building2 className="h-5 w-5 text-white" />
-        </div>
-        <div className="min-w-0">
-          <p className="font-bold text-white text-sm">Company Admin</p>
-          <p className="text-xs text-violet-300/80">Manage your organisation — members, reports, departments</p>
-        </div>
-      </div>
       <OrgAdminPanel currentUser={currentUser} />
     </div>
   )
@@ -4599,10 +4590,13 @@ function OrgAdminPanel({ currentUser }) {
   const [allReports, setAllReports] = useState([])
   const [depts, setDepts]           = useState([])
   const [loading, setLoading]       = useState(true)
-  const [section, setSection]       = useState('members') // members | reports | depts
-  const [showAddModal, setShowAdd]  = useState(false)     // add existing user
-  const [showCreateModal, setShowCreateM] = useState(false) // create new user
+  const [section, setSection]       = useState('overview') // overview | members | reports | depts | admins
+  const [showAddModal, setShowAdd]  = useState(false)
+  const [showCreateModal, setShowCreateM] = useState(false)
   const [newDeptName, setNewDeptName] = useState('')
+  const [reviewingReport, setReviewingReport] = useState(null) // { report, action }
+  const [reviewNote, setReviewNote] = useState('')
+  const [reviewLoading, setReviewLoading] = useState(false)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -4623,56 +4617,244 @@ function OrgAdminPanel({ currentUser }) {
     reimbursed: { label: 'Reimbursed', color: 'text-purple-300 bg-purple-500/10 border-purple-500/20' },
   }
 
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="animate-spin h-6 w-6 text-amber-400" /></div>
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="animate-spin h-6 w-6 text-violet-400" /></div>
 
-  const pendingCount = allReports.filter(r => r.status === 'submitted').length
+  const pendingCount   = allReports.filter(r => r.status === 'submitted').length
+  const approvedCount  = allReports.filter(r => r.status === 'approved').length
+  const orgAdmins      = members.filter(m => m.org_role === 'org_admin' || m.org_role === 'ceo')
+  const nonAdminMembers = members.filter(m => m.org_role !== 'org_admin' && m.org_role !== 'ceo')
+
+  const handleReview = async () => {
+    if (!reviewingReport) return
+    setReviewLoading(true)
+    try {
+      if (reviewingReport.action === 'approve')
+        await orgApproveReport(reviewingReport.report.id, reviewNote || null)
+      else if (reviewingReport.action === 'reject')
+        await orgRejectReport(reviewingReport.report.id, reviewNote || null)
+      else if (reviewingReport.action === 'reimburse')
+        await orgReimburseReport(reviewingReport.report.id)
+      setReviewingReport(null); setReviewNote(''); await reload()
+    } catch (e) { alert(e.message) } finally { setReviewLoading(false) }
+  }
+
+  const NAV = [
+    { id: 'overview', label: 'Overview',    icon: LayoutDashboard },
+    { id: 'admins',   label: 'Admin Team',  icon: Shield          },
+    { id: 'members',  label: `Members`,     icon: Users           },
+    { id: 'reports',  label: 'Reports',     icon: FileText        },
+    { id: 'depts',    label: 'Departments', icon: Building2       },
+  ]
 
   return (
     <div className="space-y-4">
-      {/* Admin banner */}
-      <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/25 rounded-2xl p-4">
-        <div className="flex items-center justify-between">
+      {/* Dashboard header */}
+      <div className="bg-gradient-to-r from-violet-500/10 to-indigo-500/10 border border-violet-500/20 rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shrink-0">
-              <Shield className="h-5 w-5 text-white" />
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
+              <Building2 className="h-5 w-5 text-white" />
             </div>
             <div>
-              <p className="font-bold text-white text-sm">{stats?.org_name}</p>
-              <p className="text-xs text-amber-400/80">Organisation Admin</p>
+              <p className="font-bold text-white text-sm">{stats?.org_name || 'Company'}</p>
+              <p className="text-xs text-violet-300/80">Admin Dashboard</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold text-white">{stats?.member_count ?? '—'}</p>
-            <p className="text-[11px] text-slate-500">members</p>
-          </div>
+          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30">
+            {(currentUser.org_role === 'ceo' ? ORG_ROLE_META.ceo : ORG_ROLE_META.org_admin).label}
+          </span>
+        </div>
+        {/* Stats row */}
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { label: 'Members',   value: stats?.member_count ?? 0,  color: 'text-violet-300' },
+            { label: 'Pending',   value: pendingCount,               color: pendingCount > 0 ? 'text-amber-300' : 'text-slate-400' },
+            { label: 'Approved',  value: approvedCount,              color: 'text-emerald-300' },
+            { label: 'Depts',     value: depts.length,               color: 'text-blue-300'   },
+          ].map(s => (
+            <div key={s.label} className="bg-slate-900/40 rounded-xl p-2.5 text-center border border-slate-700/30">
+              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">{s.label}</p>
+            </div>
+          ))}
         </div>
         {pendingCount > 0 && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+          <button onClick={() => setSection('reports')}
+            className="mt-3 w-full flex items-center justify-center gap-2 text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-xl px-3 py-2 transition-colors">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {pendingCount} expense report{pendingCount !== 1 ? 's' : ''} waiting for approval
-          </div>
+            {pendingCount} report{pendingCount !== 1 ? 's' : ''} waiting for review — tap to action
+          </button>
         )}
       </div>
 
-      {/* Section tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {[
-          { id: 'members', label: `Members (${members.length})`, icon: Users },
-          { id: 'reports', label: `Reports${pendingCount ? ` · ${pendingCount} pending` : ''}`, icon: FileText },
-          { id: 'depts',   label: 'Departments',                 icon: Building2 },
-        ].map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)}
+      {/* Navigation */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
+        {NAV.map(n => (
+          <button key={n.id} onClick={() => setSection(n.id)}
             className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-              section === s.id
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+              section === n.id
+                ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
                 : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
             }`}>
-            <s.icon className="h-3.5 w-3.5" />{s.label}
+            <n.icon className="h-3.5 w-3.5" />
+            {n.label}
+            {n.id === 'reports' && pendingCount > 0 && (
+              <span className="bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{pendingCount}</span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* Members section */}
+      {/* ── Overview ── */}
+      {section === 'overview' && (
+        <div className="space-y-3">
+          {/* Admin team quick-view */}
+          <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-bold text-white flex items-center gap-2"><Shield className="h-4 w-4 text-violet-400" /> Admin Team</p>
+              <button onClick={() => setSection('admins')} className="text-xs text-violet-400 hover:text-violet-300 font-semibold">Manage →</button>
+            </div>
+            {orgAdmins.length === 0 ? (
+              <p className="text-xs text-slate-600">No admins assigned yet.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {orgAdmins.map(a => (
+                  <div key={a.id} className="flex items-center gap-1.5 bg-violet-500/10 border border-violet-500/20 rounded-full px-2.5 py-1">
+                    <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{a.name.charAt(0)}</div>
+                    <span className="text-xs text-violet-300 font-medium">{a.name}</span>
+                    <span className="text-[9px] text-violet-400/60">{a.org_role === 'ceo' ? 'CEO' : 'HR Admin'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Pending reports quick-view */}
+          {pendingCount > 0 && (
+            <div className="bg-slate-800/60 border border-amber-500/20 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-white flex items-center gap-2"><FileText className="h-4 w-4 text-amber-400" /> Needs Review</p>
+                <button onClick={() => setSection('reports')} className="text-xs text-amber-400 hover:text-amber-300 font-semibold">View all →</button>
+              </div>
+              <div className="space-y-2">
+                {allReports.filter(r => r.status === 'submitted').slice(0, 3).map(r => (
+                  <div key={r.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-200 truncate">{r.title}</p>
+                      <p className="text-[11px] text-slate-500">{r.submitted_by_name} · {r.currency} {Number(r.total_amount).toFixed(2)}</p>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <button onClick={() => { setReviewingReport({ report: r, action: 'approve' }); setReviewNote('') }}
+                        className="px-2.5 py-1 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg transition-colors">Approve</button>
+                      <button onClick={() => { setReviewingReport({ report: r, action: 'reject' }); setReviewNote('') }}
+                        className="px-2.5 py-1 text-[10px] font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors">Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Members quick-view */}
+          <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-bold text-white flex items-center gap-2"><Users className="h-4 w-4 text-blue-400" /> Team ({members.length})</p>
+              <button onClick={() => setSection('members')} className="text-xs text-blue-400 hover:text-blue-300 font-semibold">Manage →</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {members.slice(0, 8).map(m => {
+                const rm = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
+                return (
+                  <div key={m.id} className="flex items-center gap-1.5 bg-slate-700/40 border border-slate-600/30 rounded-full px-2.5 py-1">
+                    <div className={`h-4 w-4 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[8px] font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
+                    <span className="text-[11px] text-slate-300">{m.name}</span>
+                  </div>
+                )
+              })}
+              {members.length > 8 && <span className="text-[11px] text-slate-500 px-2 py-1">+{members.length - 8} more</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Admin Team ── */}
+      {section === 'admins' && (
+        <div className="space-y-3">
+          <div className="bg-violet-500/5 border border-violet-500/20 rounded-2xl p-4">
+            <div className="flex items-start gap-3 mb-3">
+              <Shield className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-white">Admin Team Access</p>
+                <p className="text-xs text-slate-400 mt-0.5">Admins and CEOs can see the Company tab and manage all org data — members, reports, departments. Grant access to share the workload.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Current admins */}
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider px-1">Current Admins ({orgAdmins.length})</p>
+          {orgAdmins.length === 0 ? (
+            <p className="text-sm text-slate-600 text-center py-4">No co-admins yet. Promote a member below.</p>
+          ) : (
+            orgAdmins.map(a => {
+              const rm = ORG_ROLE_META[a.org_role] || ORG_ROLE_META.member
+              return (
+                <div key={a.id} className="bg-slate-800/60 border border-violet-500/20 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>{a.name.charAt(0)}</div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">{a.name} {a.id === currentUser.id && <span className="text-[10px] text-slate-500">(you)</span>}</p>
+                      <p className="text-[11px] text-slate-500">{a.email}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${rm.color}`}>{rm.label}</span>
+                    {a.id !== currentUser.id && (
+                      <button onClick={async () => {
+                        if (!confirm(`Remove admin access from ${a.name}? They'll become a regular member.`)) return
+                        try { await orgUpdateMember(a.id, { org_role: 'member' }); await reload() } catch (e) { alert(e.message) }
+                      }} className="text-xs text-slate-500 hover:text-red-400 bg-slate-700/50 hover:bg-red-500/10 border border-slate-600/50 hover:border-red-500/30 px-2 py-1 rounded-lg transition-colors font-medium">
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })
+          )}
+
+          {/* Promote a member */}
+          {nonAdminMembers.length > 0 && (
+            <>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider px-1 pt-2">Grant Admin Access</p>
+              <div className="space-y-2">
+                {nonAdminMembers.map(m => {
+                  const rm = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
+                  return (
+                    <div key={m.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-200">{m.name}</p>
+                          <p className="text-[11px] text-slate-500">{m.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${rm.color}`}>{rm.label}</span>
+                        <button onClick={async () => {
+                          if (!confirm(`Grant admin access to ${m.name}? They'll see the Company tab and can manage this organisation.`)) return
+                          try { await orgUpdateMember(m.id, { org_role: 'org_admin' }); await reload() } catch (e) { alert(e.message) }
+                        }} className="text-xs text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/25 px-2.5 py-1 rounded-lg transition-colors font-bold">
+                          + Make Admin
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Members ── */}
       {section === 'members' && (
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -4720,7 +4902,7 @@ function OrgAdminPanel({ currentUser }) {
                       <p className="text-[10px] text-slate-600 mb-1">Role</p>
                       <select value={m.org_role || 'member'} onChange={async (e) => {
                         try { await orgUpdateMember(m.id, { org_role: e.target.value }); setMembers(p => p.map(x => x.id === m.id ? { ...x, org_role: e.target.value } : x)) } catch (err) { alert(err.message) }
-                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
+                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
                         <option value="member">Member</option>
                         <option value="manager">Manager</option>
                         <option value="org_admin">HR Admin</option>
@@ -4732,7 +4914,7 @@ function OrgAdminPanel({ currentUser }) {
                       <select value={m.department_id || ''} onChange={async (e) => {
                         const deptId = e.target.value ? parseInt(e.target.value) : null
                         try { await orgUpdateMember(m.id, { department_id: deptId }); setMembers(p => p.map(x => x.id === m.id ? { ...x, department_id: deptId } : x)) } catch (err) { alert(err.message) }
-                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
+                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
                         <option value="">No dept</option>
                         {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                       </select>
@@ -4742,9 +4924,9 @@ function OrgAdminPanel({ currentUser }) {
                       <select value={m.manager_id || ''} onChange={async (e) => {
                         const mgr = e.target.value ? parseInt(e.target.value) : null
                         try { await orgUpdateMember(m.id, { manager_id: mgr }); setMembers(p => p.map(x => x.id === m.id ? { ...x, manager_id: mgr } : x)) } catch (err) { alert(err.message) }
-                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
+                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
                         <option value="">None</option>
-                        {members.filter(x => x.id !== m.id && (x.org_role === 'manager' || x.org_role === 'org_admin')).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        {members.filter(x => x.id !== m.id && (x.org_role === 'manager' || x.org_role === 'org_admin' || x.org_role === 'ceo')).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
                       </select>
                     </div>
                   </div>
@@ -4755,7 +4937,7 @@ function OrgAdminPanel({ currentUser }) {
         </div>
       )}
 
-      {/* All reports section */}
+      {/* ── Reports ── */}
       {section === 'reports' && (
         <div className="space-y-2">
           {allReports.length === 0 ? (
@@ -4767,7 +4949,7 @@ function OrgAdminPanel({ currentUser }) {
             allReports.map(r => {
               const meta = STATUS_META[r.status] || STATUS_META.draft
               return (
-                <div key={r.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3.5">
+                <div key={r.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3.5 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-semibold text-slate-100 text-sm truncate">{r.title}</p>
@@ -4775,7 +4957,25 @@ function OrgAdminPanel({ currentUser }) {
                     </div>
                     <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>{meta.label}</span>
                   </div>
-                  {r.review_notes && <p className="text-xs text-amber-400 mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">Note: {r.review_notes}</p>}
+                  {r.review_notes && <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">Note: {r.review_notes}</p>}
+                  {r.status === 'submitted' && (
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => { setReviewingReport({ report: r, action: 'approve' }); setReviewNote('') }}
+                        className="flex-1 py-1.5 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl transition-colors">
+                        Approve
+                      </button>
+                      <button onClick={() => { setReviewingReport({ report: r, action: 'reject' }); setReviewNote('') }}
+                        className="flex-1 py-1.5 text-xs font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors">
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                  {r.status === 'approved' && (
+                    <button onClick={() => { setReviewingReport({ report: r, action: 'reimburse' }); setReviewNote('') }}
+                      className="w-full py-1.5 text-xs font-bold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-colors">
+                      Mark Reimbursed
+                    </button>
+                  )}
                 </div>
               )
             })
@@ -4783,15 +4983,15 @@ function OrgAdminPanel({ currentUser }) {
         </div>
       )}
 
-      {/* Departments section */}
+      {/* ── Departments ── */}
       {section === 'depts' && (
         <div className="space-y-3">
           <div className="flex gap-2">
             <input value={newDeptName} onChange={e => setNewDeptName(e.target.value)} placeholder="New department name"
-              className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-amber-500 text-slate-100 placeholder-slate-600" />
+              className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600" />
             <button disabled={!newDeptName.trim()} onClick={async () => {
               try { await orgCreateDept(newDeptName.trim()); setNewDeptName(''); await reload() } catch (e) { alert(e.message) }
-            }} className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition-colors">Add</button>
+            }} className="px-4 py-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition-colors">Add</button>
           </div>
           {depts.length === 0 ? (
             <p className="text-sm text-slate-600 text-center py-8">No departments yet.</p>
@@ -4809,6 +5009,50 @@ function OrgAdminPanel({ currentUser }) {
           )}
         </div>
       )}
+
+      {/* ── Review confirmation modal ── */}
+      <AnimatePresence>
+        {reviewingReport && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-700/50">
+                <h3 className="font-bold text-white text-sm">
+                  {reviewingReport.action === 'approve' && '✓ Approve Report'}
+                  {reviewingReport.action === 'reject'  && '✗ Reject Report'}
+                  {reviewingReport.action === 'reimburse' && '💳 Mark as Reimbursed'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">{reviewingReport.report.title} · {reviewingReport.report.submitted_by_name}</p>
+              </div>
+              <div className="p-6 space-y-4">
+                {reviewingReport.action !== 'reimburse' && (
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Note (optional)</label>
+                    <textarea value={reviewNote} onChange={e => setReviewNote(e.target.value)} rows={3}
+                      placeholder="Add a comment for the employee..."
+                      className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600 resize-none" />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={() => { setReviewingReport(null); setReviewNote('') }}
+                    className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-semibold rounded-xl transition-colors">Cancel</button>
+                  <button onClick={handleReview} disabled={reviewLoading}
+                    className={`flex-1 py-2.5 text-white text-sm font-bold rounded-xl transition-colors flex items-center justify-center ${
+                      reviewingReport.action === 'approve'   ? 'bg-emerald-500 hover:bg-emerald-600' :
+                      reviewingReport.action === 'reject'    ? 'bg-red-500 hover:bg-red-600' :
+                      'bg-purple-500 hover:bg-purple-600'
+                    } disabled:opacity-50`}>
+                    {reviewLoading ? <Loader2 className="animate-spin h-4 w-4" /> :
+                      reviewingReport.action === 'approve' ? 'Approve' :
+                      reviewingReport.action === 'reject'  ? 'Reject' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Add existing user modal */}
       <AnimatePresence>

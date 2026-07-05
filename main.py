@@ -60,7 +60,7 @@ app.include_router(corporate_router.router)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "version": "2.2"}
+    return {"status": "ok", "version": "2.3"}
 
 
 @app.get("/lb-health")
