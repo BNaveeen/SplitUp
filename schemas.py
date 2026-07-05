@@ -372,6 +372,14 @@ class ReportExpenseItem(BaseModel):
     class Config:
         from_attributes = True
 
+class WorkExpenseItem(BaseModel):
+    description: str
+    amount: float
+    date: Optional[str] = None
+    category: Optional[str] = None
+    currency: Optional[str] = None
+    receipt_image: Optional[str] = None
+
 class ReportResponse(BaseModel):
     id: int
     title: str

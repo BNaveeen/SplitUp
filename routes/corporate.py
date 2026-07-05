@@ -11,6 +11,7 @@ from schemas import (
     AssignCorporateRequest, ReportCreate, ReportUpdate,
     ReportReviewRequest, ReportResponse, ReportExpenseItem,
     OrgMemberUpdate, OrgAddMemberRequest, OrgCreateMemberRequest,
+    WorkExpenseItem,
 )
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -580,6 +581,83 @@ def remove_expense_from_report(
         raise HTTPException(status_code=404, detail="Expense not in this report")
 
     expense.report_id   = None
+    report.total_amount = sum(float(e.amount) for e in report.expenses if e.id != expense_id)
+    report.updated_at   = datetime.utcnow()
+    db.commit()
+    return _fmt_report(report)
+
+
+# ── Expense Report inline items ───────────────────────────────────────────────
+
+@router.post("/my/reports/{report_id}/items")
+def add_report_item(
+    report_id: int,
+    body: WorkExpenseItem,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    report = db.query(ExpenseReport).filter(
+        ExpenseReport.id == report_id,
+        ExpenseReport.submitted_by_id == uid,
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.status != "draft":
+        raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
+
+    date_val = None
+    if body.date:
+        try:
+            date_val = datetime.fromisoformat(body.date)
+        except Exception:
+            date_val = datetime.utcnow()
+    else:
+        date_val = datetime.utcnow()
+
+    expense = Expense(
+        description    = body.description.strip(),
+        amount         = body.amount,
+        payer_id       = uid,
+        created_by_id  = uid,
+        currency       = body.currency or report.currency or "GBP",
+        category       = body.category,
+        date           = date_val,
+        report_id      = report_id,
+        status         = "active",
+    )
+    db.add(expense)
+    db.flush()
+    report.total_amount = sum(float(e.amount) for e in report.expenses)
+    report.updated_at   = datetime.utcnow()
+    db.commit()
+    return _fmt_report(report)
+
+
+@router.delete("/my/reports/{report_id}/items/{expense_id}")
+def delete_report_item(
+    report_id: int,
+    expense_id: int,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    report = db.query(ExpenseReport).filter(
+        ExpenseReport.id == report_id,
+        ExpenseReport.submitted_by_id == uid,
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.status != "draft":
+        raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
+
+    expense = db.query(Expense).filter(
+        Expense.id == expense_id,
+        Expense.report_id == report_id,
+    ).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense item not found in this report")
+
+    db.delete(expense)
+    db.flush()
     report.total_amount = sum(float(e.amount) for e in report.expenses if e.id != expense_id)
     report.updated_at   = datetime.utcnow()
     db.commit()

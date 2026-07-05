@@ -27,7 +27,8 @@ import {
   orgListMembers, orgStats, orgAllReports, orgAddMember, orgCreateMember, orgUpdateMember, orgRemoveMember,
   orgCreateDept, orgDeleteDept,
   fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
-  addExpenseToReport, removeExpenseFromReport, fetchMyApprovals, approveReport, rejectReport, reimburseReport,
+  addExpenseToReport, removeExpenseFromReport, addReportItem, deleteReportItem,
+  fetchMyApprovals, approveReport, rejectReport, reimburseReport,
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -2588,6 +2589,14 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [deptInputs, setDeptInputs]         = useState({})  // { [orgId]: string }
   const [orgLoading, setOrgLoading]         = useState(false)
   const [expandedOrg, setExpandedOrg]       = useState(null)
+  const [showOrgForm, setShowOrgForm]       = useState(false)
+  const [showUserForm, setShowUserForm]     = useState(false)
+  const [orgUserName, setOrgUserName]       = useState('')
+  const [orgUserEmail, setOrgUserEmail]     = useState('')
+  const [orgUserPass, setOrgUserPass]       = useState('')
+  const [orgUserIsAdmin, setOrgUserIsAdmin] = useState(false)
+  const [orgUserLoading, setOrgUserLoading] = useState(false)
+  const [orgUserError, setOrgUserError]     = useState('')
 
   const TABS = [
     { id: 'overview',       label: 'Overview',  full: 'Overview',      icon: LayoutGrid },
@@ -3196,17 +3205,6 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
             </div>
 
           ) : activeTab === 'organisations' ? (
-            (() => {
-              const [showOrgForm, setShowOrgForm] = React.useState(false)
-              const [showUserForm, setShowUserForm] = React.useState(false)
-              const [orgUserName, setOrgUserName] = React.useState('')
-              const [orgUserEmail, setOrgUserEmail] = React.useState('')
-              const [orgUserPass, setOrgUserPass] = React.useState('')
-              const [orgUserIsAdmin, setOrgUserIsAdmin] = React.useState(false)
-              const [orgUserLoading, setOrgUserLoading] = React.useState(false)
-              const [orgUserError, setOrgUserError] = React.useState('')
-
-              return (
             <div className="space-y-5">
               {/* How it works hint */}
               <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4 text-xs text-slate-400 space-y-1.5">
@@ -3472,8 +3470,6 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                 })
               )}
             </div>
-              )
-            })()
 
           ) : null
         )}
@@ -3755,15 +3751,23 @@ function ExpenseList({ expenses, currentUser, allUsers = [], showValidOnly = fal
                 balColor = 'text-slate-500'
               }
 
-              const isDeleted = e.status === 'deleted'
+              const isDeleted  = e.status === 'deleted'
+              const isSettled  = !isDeleted && e.settlement_statuses?.length > 0 &&
+                e.settlement_statuses.every(ss => ss.status === 'cleared')
 
               return (
                 <motion.div key={e.id} id={`expense-${e.id}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
-                  className={`flex flex-col gap-2 ${isDeleted ? 'bg-slate-900/30 opacity-60 grayscale' : 'bg-slate-800/40 hover:bg-slate-800/70'} border ${(e.status === 'pending_deletion' || e.status === 'approved_for_deletion') ? 'border-amber-500/50' : 'border-slate-700/30'} hover:border-slate-600/50 rounded-xl px-3 py-3 transition-all relative overflow-hidden`}>
-                  
+                  className={`flex flex-col gap-2 ${isDeleted ? 'bg-slate-900/30 opacity-60 grayscale' : 'bg-slate-800/40 hover:bg-slate-800/70'} border ${(e.status === 'pending_deletion' || e.status === 'approved_for_deletion') ? 'border-amber-500/50' : isSettled ? 'border-emerald-500/20' : 'border-slate-700/30'} hover:border-slate-600/50 rounded-xl px-3 py-3 transition-all relative overflow-hidden`}>
+
                   {isDeleted && (
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                       <span className="text-4xl font-black text-slate-500/10 -rotate-12 uppercase">Deleted</span>
+                    </div>
+                  )}
+
+                  {isSettled && (
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <span className="text-4xl font-black text-emerald-500/10 -rotate-12 uppercase">Settled</span>
                     </div>
                   )}
 
@@ -4930,7 +4934,7 @@ function WorkTab({ currentUser }) {
   const [loading, setLoading]       = useState(true)
   const [activeSection, setSection] = useState('reports') // 'reports' | 'approvals' | 'org'
   const [showCreateModal, setShowCreate] = useState(false)
-  const [selectedReport, setSelectedReport] = useState(null)
+  const [openReport, setOpenReport]     = useState(null) // report object to show in detail modal
   const [reviewModal, setReviewModal] = useState(null) // { report, action: 'approve'|'reject' }
 
   const isOrgAdmin = currentUser.org_role === 'org_admin'
@@ -5069,66 +5073,32 @@ function WorkTab({ currentUser }) {
             <div className="flex flex-col items-center justify-center py-14 text-center">
               <FileText className="h-10 w-10 text-slate-700 mb-3" />
               <p className="text-slate-400 font-medium">No expense reports yet</p>
-              <p className="text-xs text-slate-600 mt-1">Create a report to start tracking work expenses</p>
+              <p className="text-xs text-slate-600 mt-1">Create a report and add expense line items</p>
             </div>
           ) : (
             reports.map(r => {
               const meta = STATUS_META[r.status] || STATUS_META.draft
               return (
                 <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-                  className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 cursor-pointer hover:border-slate-600/60 transition-all"
-                  onClick={() => setSelectedReport(selectedReport?.id === r.id ? null : r)}>
+                  className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 cursor-pointer hover:border-indigo-500/30 hover:bg-slate-800/80 transition-all active:scale-[0.99]"
+                  onClick={() => setOpenReport(r)}>
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="font-semibold text-slate-100 truncate">{r.title}</p>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        {r.expenses.length} expense{r.expenses.length !== 1 ? 's' : ''} · {r.currency} {Number(r.total_amount).toFixed(2)}
+                        {r.expenses.length} item{r.expenses.length !== 1 ? 's' : ''} · {r.currency} {Number(r.total_amount).toFixed(2)}
+                        {r.period_start && ` · ${new Date(r.period_start).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}`}
                       </p>
                     </div>
-                    <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>
-                      {meta.label}
-                    </span>
-                  </div>
-
-                  {selectedReport?.id === r.id && (
-                    <div className="mt-3 pt-3 border-t border-slate-700/50 space-y-2">
-                      {r.description && <p className="text-xs text-slate-400">{r.description}</p>}
-                      {r.period_start && (
-                        <p className="text-xs text-slate-500 flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {new Date(r.period_start).toLocaleDateString()} – {r.period_end ? new Date(r.period_end).toLocaleDateString() : '…'}
-                        </p>
-                      )}
-                      {r.review_notes && (
-                        <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
-                          Note: {r.review_notes}
-                        </p>
-                      )}
-                      {r.expenses.length > 0 && (
-                        <div className="space-y-1 max-h-40 overflow-y-auto">
-                          {r.expenses.map(e => (
-                            <div key={e.id} className="flex items-center justify-between text-xs py-1 px-2 bg-slate-900/50 rounded-lg">
-                              <span className="text-slate-300 truncate">{e.description}</span>
-                              <span className="text-slate-400 shrink-0 ml-2">{e.currency || r.currency} {Number(e.amount).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="flex gap-2 pt-1">
-                        {r.status === 'draft' && (
-                          <button onClick={e => { e.stopPropagation(); handleSubmit(r.id) }}
-                            className="flex-1 py-2 text-xs font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded-xl transition-colors flex items-center justify-center gap-1">
-                            <Send className="h-3 w-3" /> Submit
-                          </button>
-                        )}
-                        {(r.status === 'draft' || r.status === 'rejected') && (
-                          <button onClick={e => { e.stopPropagation(); handleDelete(r.id) }}
-                            className="px-3 py-2 text-xs font-bold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-colors">
-                            Delete
-                          </button>
-                        )}
-                      </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>{meta.label}</span>
+                      <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
                     </div>
+                  </div>
+                  {r.review_notes && (
+                    <p className="mt-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 truncate">
+                      {r.review_notes}
+                    </p>
                   )}
                 </motion.div>
               )
@@ -5255,7 +5225,21 @@ function WorkTab({ currentUser }) {
         {showCreateModal && (
           <CreateReportModal
             onClose={() => setShowCreate(false)}
-            onCreated={async () => { setShowCreate(false); await reload() }}
+            onCreated={async (newReport) => {
+              setShowCreate(false)
+              await reload()
+              setOpenReport(newReport)
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Report Detail Modal */}
+      <AnimatePresence>
+        {openReport && (
+          <ReportDetailModal
+            report={openReport}
+            onClose={async () => { setOpenReport(null); await reload() }}
           />
         )}
       </AnimatePresence>
@@ -5276,19 +5260,27 @@ function WorkTab({ currentUser }) {
 }
 
 function CreateReportModal({ onClose, onCreated }) {
-  const [title, setTitle]       = useState('')
-  const [desc, setDesc]         = useState('')
-  const [currency, setCurrency] = useState('GBP')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
+  const [title, setTitle]           = useState('')
+  const [desc, setDesc]             = useState('')
+  const [currency, setCurrency]     = useState('GBP')
+  const [periodStart, setPeriodStart] = useState('')
+  const [periodEnd, setPeriodEnd]   = useState('')
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState('')
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!title.trim()) { setError('Title is required'); return }
     setLoading(true); setError('')
     try {
-      await createReport({ title: title.trim(), description: desc || null, currency })
-      onCreated()
+      const report = await createReport({
+        title: title.trim(),
+        description: desc || null,
+        currency,
+        period_start: periodStart || null,
+        period_end: periodEnd || null,
+      })
+      onCreated(report)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -5308,16 +5300,28 @@ function CreateReportModal({ onClose, onCreated }) {
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Title</label>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Report Title *</label>
             <input type="text" required value={title} onChange={e => setTitle(e.target.value)} autoFocus
               className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
-              placeholder="e.g. London Trip – June 2026" />
+              placeholder="e.g. London Business Trip – June 2026" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Description (optional)</label>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Business Purpose</label>
             <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2}
               className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 resize-none"
-              placeholder="What was this for?" />
+              placeholder="Brief description of the business purpose" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Start Date</label>
+              <input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)}
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">End Date</label>
+              <input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} min={periodStart}
+                className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
+            </div>
           </div>
           <div>
             <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Currency</label>
@@ -5332,11 +5336,283 @@ function CreateReportModal({ onClose, onCreated }) {
           </div>
           {error && <p className="text-red-400 text-sm">{error}</p>}
           <button type="submit" disabled={loading}
-            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex justify-center items-center">
-            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Create Report'}
+            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2">
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Plus className="h-4 w-4" /> Create & Add Expenses</>}
           </button>
         </form>
       </motion.div>
+    </motion.div>
+  )
+}
+
+// ── Work Expense Categories ───────────────────────────────────────────────────
+const WORK_CATEGORIES = [
+  { id: 'flight',        label: 'Airfare',         icon: '✈️' },
+  { id: 'accommodation', label: 'Hotel',           icon: '🏨' },
+  { id: 'transport',     label: 'Transport',       icon: '🚗' },
+  { id: 'food',          label: 'Meals',           icon: '🍽️' },
+  { id: 'entertainment', label: 'Entertainment',   icon: '🎭' },
+  { id: 'shopping',      label: 'Supplies',        icon: '🛍️' },
+  { id: 'bill',          label: 'Fees & Charges',  icon: '💳' },
+  { id: 'other',         label: 'Other',           icon: '📦' },
+]
+
+function ReportDetailModal({ report: initialReport, onClose }) {
+  const [report, setReport]       = useState(initialReport)
+  const [showAddForm, setShowAdd] = useState(false)
+  const [submitLoading, setSubmitLoading] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [actionError, setActionError]     = useState('')
+
+  // Add item form state
+  const [itemDesc, setItemDesc]         = useState('')
+  const [itemDate, setItemDate]         = useState(todayISO())
+  const [itemAmount, setItemAmount]     = useState('')
+  const [itemCategory, setItemCategory] = useState('other')
+  const [itemLoading, setItemLoading]   = useState(false)
+  const [itemError, setItemError]       = useState('')
+
+  const isDraft = report.status === 'draft'
+
+  const STATUS_COLORS = {
+    draft:      'text-slate-400 bg-slate-800 border-slate-600',
+    submitted:  'text-blue-300 bg-blue-500/10 border-blue-500/30',
+    approved:   'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+    rejected:   'text-red-300 bg-red-500/10 border-red-500/30',
+    reimbursed: 'text-purple-300 bg-purple-500/10 border-purple-500/30',
+  }
+  const STATUS_LABELS = { draft:'Draft', submitted:'Submitted', approved:'Approved', rejected:'Rejected', reimbursed:'Reimbursed' }
+
+  const handleAddItem = async (e) => {
+    e.preventDefault()
+    if (!itemDesc.trim()) { setItemError('Description is required'); return }
+    const amt = parseFloat(itemAmount)
+    if (!amt || amt <= 0) { setItemError('Enter a valid amount'); return }
+    setItemLoading(true); setItemError('')
+    try {
+      const updated = await addReportItem(report.id, {
+        description: itemDesc.trim(),
+        amount: amt,
+        date: itemDate || null,
+        category: itemCategory,
+        currency: report.currency,
+      })
+      setReport(updated)
+      setItemDesc(''); setItemAmount(''); setItemDate(todayISO()); setItemCategory('other')
+      setShowAdd(false)
+    } catch (err) { setItemError(err.message) }
+    finally { setItemLoading(false) }
+  }
+
+  const handleRemoveItem = async (expenseId) => {
+    try {
+      const updated = await deleteReportItem(report.id, expenseId)
+      setReport(updated)
+    } catch (err) { setActionError(err.message) }
+  }
+
+  const handleSubmit = async () => {
+    setSubmitLoading(true); setActionError('')
+    try {
+      const updated = await submitReport(report.id)
+      setReport(updated)
+    } catch (err) { setActionError(err.message) }
+    finally { setSubmitLoading(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!confirm('Delete this report? This cannot be undone.')) return
+    setDeleteLoading(true)
+    try {
+      await deleteReport(report.id)
+      onClose()
+    } catch (err) { setActionError(err.message); setDeleteLoading(false) }
+  }
+
+  const catMap = Object.fromEntries(WORK_CATEGORIES.map(c => [c.id, c]))
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex flex-col bg-slate-900">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-4 border-b border-slate-800 shrink-0">
+        <button onClick={onClose} className="p-2 -ml-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors">
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-bold text-white text-base truncate">{report.title}</h2>
+          <p className="text-xs text-slate-500 truncate">{report.organisation_name}{report.department_name ? ` · ${report.department_name}` : ''}</p>
+        </div>
+        <span className={`shrink-0 text-xs font-bold px-3 py-1 rounded-full border ${STATUS_COLORS[report.status] || STATUS_COLORS.draft}`}>
+          {STATUS_LABELS[report.status] || report.status}
+        </span>
+      </div>
+
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+        {/* Summary card */}
+        <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Total</span>
+            <span className="text-xl font-black text-white">{report.currency} {Number(report.total_amount).toFixed(2)}</span>
+          </div>
+          {report.description && (
+            <p className="text-xs text-slate-400 border-t border-slate-700/50 pt-2">{report.description}</p>
+          )}
+          {(report.period_start || report.period_end) && (
+            <p className="text-xs text-slate-500 flex items-center gap-1.5 border-t border-slate-700/50 pt-2">
+              <Calendar className="h-3 w-3" />
+              {report.period_start ? new Date(report.period_start).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—'}
+              {' – '}
+              {report.period_end ? new Date(report.period_end).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '…'}
+            </p>
+          )}
+          {report.manager_name && (
+            <p className="text-xs text-slate-500 border-t border-slate-700/50 pt-2">Approver: <span className="text-slate-300">{report.manager_name}</span></p>
+          )}
+          {report.reviewed_by_name && (
+            <p className="text-xs text-slate-500 border-t border-slate-700/50 pt-2">Reviewed by: <span className="text-slate-300">{report.reviewed_by_name}</span></p>
+          )}
+          {report.review_notes && (
+            <p className={`text-xs px-3 py-2 rounded-xl border mt-1 ${report.status === 'rejected' ? 'text-red-300 bg-red-500/10 border-red-500/20' : 'text-amber-300 bg-amber-500/10 border-amber-500/20'}`}>
+              {report.review_notes}
+            </p>
+          )}
+        </div>
+
+        {/* Expense line items */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Expense Items ({report.expenses.length})
+            </p>
+            {isDraft && !showAddForm && (
+              <button onClick={() => setShowAdd(true)}
+                className="flex items-center gap-1 text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors">
+                <Plus className="h-3.5 w-3.5" /> Add Item
+              </button>
+            )}
+          </div>
+
+          {report.expenses.length === 0 && !showAddForm && (
+            <div className="flex flex-col items-center justify-center py-10 text-center bg-slate-800/40 border border-dashed border-slate-700 rounded-2xl">
+              <Receipt className="h-8 w-8 text-slate-700 mb-2" />
+              <p className="text-sm text-slate-500 font-medium">No expense items yet</p>
+              {isDraft && <p className="text-xs text-slate-600 mt-1">Tap "Add Item" to add your first expense</p>}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {report.expenses.map((e) => {
+              const cat = catMap[e.category] || catMap['other']
+              return (
+                <motion.div key={e.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-3 bg-slate-800/60 border border-slate-700/40 rounded-xl px-3 py-2.5">
+                  <span className="text-lg shrink-0">{cat?.icon || '📦'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-100 truncate">{e.description}</p>
+                    <p className="text-xs text-slate-500">
+                      {cat?.label || 'Other'}
+                      {e.date ? ` · ${new Date(e.date).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-sm font-bold text-slate-200 shrink-0">{e.currency || report.currency} {Number(e.amount).toFixed(2)}</span>
+                  {isDraft && (
+                    <button onClick={() => handleRemoveItem(e.id)}
+                      className="p-1 text-slate-600 hover:text-red-400 transition-colors shrink-0">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </motion.div>
+              )
+            })}
+          </div>
+
+          {/* Inline add form */}
+          {isDraft && showAddForm && (
+            <motion.form initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              onSubmit={handleAddItem}
+              className="mt-3 bg-slate-800/80 border border-indigo-500/30 rounded-2xl p-4 space-y-3">
+              <p className="text-xs font-bold text-indigo-300 uppercase tracking-wider">New Expense Item</p>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Description *</label>
+                <input type="text" value={itemDesc} onChange={e => setItemDesc(e.target.value)} autoFocus
+                  className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+                  placeholder="e.g. Taxi to Heathrow" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Date</label>
+                  <input type="date" value={itemDate} onChange={e => setItemDate(e.target.value)}
+                    className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Amount ({report.currency})</label>
+                  <input type="number" step="0.01" min="0.01" value={itemAmount} onChange={e => setItemAmount(e.target.value)}
+                    className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+                    placeholder="0.00" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1.5 block">Category</label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {WORK_CATEGORIES.map(c => (
+                    <button key={c.id} type="button" onClick={() => setItemCategory(c.id)}
+                      className={`flex flex-col items-center gap-0.5 py-2 rounded-xl border text-[10px] font-semibold transition-all ${
+                        itemCategory === c.id
+                          ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                          : 'bg-slate-900/50 border-slate-700 text-slate-500 hover:text-slate-300'
+                      }`}>
+                      <span className="text-base leading-none">{c.icon}</span>
+                      <span className="truncate w-full text-center px-0.5">{c.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {itemError && <p className="text-red-400 text-xs">{itemError}</p>}
+
+              <div className="flex gap-2">
+                <button type="submit" disabled={itemLoading}
+                  className="flex-1 py-2.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors flex justify-center items-center gap-1.5">
+                  {itemLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Check className="h-4 w-4" /> Add Item</>}
+                </button>
+                <button type="button" onClick={() => { setShowAdd(false); setItemError('') }}
+                  className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-bold rounded-xl transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </motion.form>
+          )}
+        </div>
+
+        {actionError && (
+          <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5">{actionError}</p>
+        )}
+      </div>
+
+      {/* Footer actions */}
+      {(isDraft || report.status === 'rejected') && (
+        <div className="shrink-0 px-4 py-4 border-t border-slate-800 space-y-2 bg-slate-900">
+          {isDraft && (
+            <button onClick={handleSubmit} disabled={submitLoading || report.expenses.length === 0}
+              className="w-full py-3.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white font-bold rounded-2xl transition-colors flex justify-center items-center gap-2">
+              {submitLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Send className="h-4 w-4" /> Submit for Approval</>}
+            </button>
+          )}
+          {report.expenses.length === 0 && isDraft && (
+            <p className="text-center text-xs text-slate-600">Add at least one expense item before submitting</p>
+          )}
+          <button onClick={handleDelete} disabled={deleteLoading}
+            className="w-full py-2.5 text-red-400 hover:text-red-300 text-sm font-semibold rounded-2xl transition-colors flex justify-center items-center gap-2 hover:bg-red-500/10">
+            {deleteLoading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Trash2 className="h-4 w-4" /> Delete Report</>}
+          </button>
+        </div>
+      )}
     </motion.div>
   )
 }
