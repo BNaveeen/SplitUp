@@ -1105,10 +1105,12 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   }
 
   const tabs = [
-    { id: 'groups',   label: 'Groups',   icon: Home,      feature: null,         requiredPlan: null },
-    { id: 'activity', label: 'Activity', icon: Activity,  feature: null,         requiredPlan: null },
-    { id: 'people',   label: 'People',   icon: Users,     feature: 'people_tab', requiredPlan: 'business' },
+    { id: 'groups',   label: 'Groups',   icon: Home,       feature: null,         requiredPlan: null },
+    { id: 'activity', label: 'Activity', icon: Activity,   feature: null,         requiredPlan: null },
+    { id: 'people',   label: 'People',   icon: Users,      feature: 'people_tab', requiredPlan: 'business' },
     ...(user.organisation_id ? [{ id: 'work', label: 'Work', icon: Briefcase, feature: null, requiredPlan: null }] : []),
+    // Org admin gets their own dedicated Company tab — entirely separate from platform admin
+    ...(user.org_role === 'org_admin' ? [{ id: 'company', label: 'Company', icon: Building2, feature: null, requiredPlan: null }] : []),
   ]
 
   return (
@@ -1353,6 +1355,9 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
                 )}
                 {activeTab === 'work' && (
                   <WorkTab currentUser={user} />
+                )}
+                {activeTab === 'company' && user.org_role === 'org_admin' && (
+                  <OrgAdminPage currentUser={user} />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -4565,6 +4570,25 @@ const ORG_ROLE_META = {
   org_admin: { label: 'Org Admin', color: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
 }
 
+// ── OrgAdminPage: full-page company admin dashboard (separate Company tab) ────
+function OrgAdminPage({ currentUser }) {
+  return (
+    <div className="pt-4 pb-4 space-y-4">
+      {/* Company Admin banner — visually distinct from platform admin */}
+      <div className="bg-gradient-to-r from-violet-500/10 to-indigo-500/10 border border-violet-500/20 rounded-2xl p-4 flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
+          <Building2 className="h-5 w-5 text-white" />
+        </div>
+        <div className="min-w-0">
+          <p className="font-bold text-white text-sm">Company Admin</p>
+          <p className="text-xs text-violet-300/80">Manage your organisation — members, reports, departments</p>
+        </div>
+      </div>
+      <OrgAdminPanel currentUser={currentUser} />
+    </div>
+  )
+}
+
 function OrgAdminPanel({ currentUser }) {
   const [stats, setStats]           = useState(null)
   const [members, setMembers]       = useState([])
@@ -4937,8 +4961,6 @@ function WorkTab({ currentUser }) {
   const [openReport, setOpenReport]     = useState(null) // report object to show in detail modal
   const [reviewModal, setReviewModal] = useState(null) // { report, action: 'approve'|'reject' }
 
-  const isOrgAdmin = currentUser.org_role === 'org_admin'
-
   const isManager = orgInfo && orgInfo.direct_reports && orgInfo.direct_reports.length > 0
 
   const reload = useCallback(async () => {
@@ -4958,11 +4980,6 @@ function WorkTab({ currentUser }) {
   }, [])
 
   useEffect(() => { reload() }, [reload])
-
-  // Org admins see their full management panel first
-  if (!loading && orgInfo && isOrgAdmin && activeSection === 'reports') {
-    // default org admins to admin section on first load — but only redirect once
-  }
 
   const STATUS_META = {
     draft:       { label: 'Draft',       color: 'text-slate-400 bg-slate-800 border-slate-700' },
@@ -5034,7 +5051,6 @@ function WorkTab({ currentUser }) {
       {/* Section tabs */}
       <div className="flex gap-2 overflow-x-auto pb-0.5">
         {[
-          ...(isOrgAdmin ? [{ id: 'admin', label: 'Manage Org', icon: Shield }] : []),
           { id: 'reports',   label: 'My Reports',  icon: FileText },
           ...(isManager ? [{ id: 'approvals', label: `Approvals${approvals.length ? ` (${approvals.length})` : ''}`, icon: ClipboardList }] : []),
           { id: 'org',       label: 'Team',        icon: Users },
@@ -5042,9 +5058,7 @@ function WorkTab({ currentUser }) {
           <button key={s.id} onClick={() => setSection(s.id)}
             className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
               activeSection === s.id
-                ? s.id === 'admin'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
                 : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
             }`}>
             <s.icon className="h-3.5 w-3.5" />
@@ -5052,11 +5066,6 @@ function WorkTab({ currentUser }) {
           </button>
         ))}
       </div>
-
-      {/* Org Admin Panel */}
-      {activeSection === 'admin' && isOrgAdmin && (
-        <OrgAdminPanel currentUser={currentUser} />
-      )}
 
       {/* My Reports */}
       {activeSection === 'reports' && (
