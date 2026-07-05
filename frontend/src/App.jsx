@@ -1110,8 +1110,8 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
     { id: 'activity', label: 'Activity', icon: Activity,   feature: null,         requiredPlan: null },
     { id: 'people',   label: 'People',   icon: Users,      feature: 'people_tab', requiredPlan: 'business' },
     ...(user.organisation_id ? [{ id: 'work', label: 'Work', icon: Briefcase, feature: null, requiredPlan: null }] : []),
-    // Org admin gets their own dedicated Company tab — entirely separate from platform admin
-    ...(user.org_role === 'org_admin' ? [{ id: 'company', label: 'Company', icon: Building2, feature: null, requiredPlan: null }] : []),
+    // Org admin/CEO gets their own dedicated Company tab — entirely separate from platform admin
+    ...(user.org_role === 'org_admin' || user.org_role === 'ceo' ? [{ id: 'company', label: 'Company', icon: Building2, feature: null, requiredPlan: null }] : []),
   ]
 
   return (
@@ -1357,7 +1357,7 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
                 {activeTab === 'work' && (
                   <WorkTab currentUser={user} />
                 )}
-                {activeTab === 'company' && user.org_role === 'org_admin' && (
+                {activeTab === 'company' && (user.org_role === 'org_admin' || user.org_role === 'ceo') && (
                   <OrgAdminPage currentUser={user} />
                 )}
               </motion.div>
@@ -4590,7 +4590,7 @@ function OrgAdminPanel({ currentUser }) {
   const [allReports, setAllReports] = useState([])
   const [depts, setDepts]           = useState([])
   const [loading, setLoading]       = useState(true)
-  const [section, setSection]       = useState('overview') // overview | members | reports | depts | admins
+  const [section, setSection]       = useState('members') // overview | members | reports | depts | admins
   const [showAddModal, setShowAdd]  = useState(false)
   const [showCreateModal, setShowCreateM] = useState(false)
   const [newDeptName, setNewDeptName] = useState('')
@@ -4639,11 +4639,9 @@ function OrgAdminPanel({ currentUser }) {
   }
 
   const NAV = [
-    { id: 'overview', label: 'Overview',    icon: LayoutDashboard },
-    { id: 'admins',   label: 'Admin Team',  icon: Shield          },
-    { id: 'members',  label: `Members`,     icon: Users           },
-    { id: 'reports',  label: 'Reports',     icon: FileText        },
-    { id: 'depts',    label: 'Departments', icon: Building2       },
+    { id: 'members',  label: 'Members',     icon: Users     },
+    { id: 'reports',  label: 'Reports',     icon: FileText  },
+    { id: 'depts',    label: 'Departments', icon: Building2 },
   ]
 
   return (
@@ -4667,10 +4665,10 @@ function OrgAdminPanel({ currentUser }) {
         {/* Stats row */}
         <div className="grid grid-cols-4 gap-2">
           {[
-            { label: 'Members',   value: stats?.member_count ?? 0,  color: 'text-violet-300' },
-            { label: 'Pending',   value: pendingCount,               color: pendingCount > 0 ? 'text-amber-300' : 'text-slate-400' },
-            { label: 'Approved',  value: approvedCount,              color: 'text-emerald-300' },
-            { label: 'Depts',     value: depts.length,               color: 'text-blue-300'   },
+            { label: 'Members',  value: stats?.member_count ?? 0, color: 'text-violet-300' },
+            { label: 'Pending',  value: pendingCount,              color: pendingCount > 0 ? 'text-amber-300' : 'text-slate-400' },
+            { label: 'Approved', value: approvedCount,             color: 'text-emerald-300' },
+            { label: 'Depts',    value: depts.length,              color: 'text-blue-300'   },
           ].map(s => (
             <div key={s.label} className="bg-slate-900/40 rounded-xl p-2.5 text-center border border-slate-700/30">
               <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
@@ -4687,14 +4685,14 @@ function OrgAdminPanel({ currentUser }) {
         )}
       </div>
 
-      {/* Navigation */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
+      {/* Navigation tabs */}
+      <div className="flex gap-1.5">
         {NAV.map(n => (
           <button key={n.id} onClick={() => setSection(n.id)}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
               section === n.id
                 ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
+                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-700/40'
             }`}>
             <n.icon className="h-3.5 w-3.5" />
             {n.label}
@@ -4705,158 +4703,58 @@ function OrgAdminPanel({ currentUser }) {
         ))}
       </div>
 
-      {/* ── Overview ── */}
-      {section === 'overview' && (
+      {/* ── Members (default section — includes Admin Team card at top) ── */}
+      {section === 'members' && (
         <div className="space-y-3">
-          {/* Admin team quick-view */}
-          <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-bold text-white flex items-center gap-2"><Shield className="h-4 w-4 text-violet-400" /> Admin Team</p>
-              <button onClick={() => setSection('admins')} className="text-xs text-violet-400 hover:text-violet-300 font-semibold">Manage →</button>
+
+          {/* ── Admin Team card ── */}
+          <div className="bg-violet-500/8 border border-violet-500/25 rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 pt-4 pb-3">
+              <p className="text-sm font-bold text-white flex items-center gap-2">
+                <Shield className="h-4 w-4 text-violet-400" /> Admin Team
+                <span className="text-[10px] font-normal text-violet-400/70 ml-1">({orgAdmins.length} admin{orgAdmins.length !== 1 ? 's' : ''})</span>
+              </p>
+              <span className="text-[10px] text-violet-400/60 italic">Can manage this Company tab</span>
             </div>
-            {orgAdmins.length === 0 ? (
-              <p className="text-xs text-slate-600">No admins assigned yet.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {orgAdmins.map(a => (
-                  <div key={a.id} className="flex items-center gap-1.5 bg-violet-500/10 border border-violet-500/20 rounded-full px-2.5 py-1">
-                    <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{a.name.charAt(0)}</div>
-                    <span className="text-xs text-violet-300 font-medium">{a.name}</span>
-                    <span className="text-[9px] text-violet-400/60">{a.org_role === 'ceo' ? 'CEO' : 'HR Admin'}</span>
-                  </div>
-                ))}
+            {/* Current admins row */}
+            <div className="px-4 pb-3 flex flex-wrap gap-2">
+              {orgAdmins.map(a => (
+                <div key={a.id} className="flex items-center gap-1.5 bg-violet-500/15 border border-violet-500/25 rounded-full px-2.5 py-1">
+                  <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{a.name.charAt(0)}</div>
+                  <span className="text-xs text-violet-200 font-medium">{a.name}</span>
+                  {a.id !== currentUser.id && (
+                    <button onClick={async () => {
+                      if (!confirm(`Remove admin access from ${a.name}?`)) return
+                      try { await orgUpdateMember(a.id, { org_role: 'member' }); await reload() } catch (e) { alert(e.message) }
+                    }} className="text-violet-500 hover:text-red-400 transition-colors ml-0.5">
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {orgAdmins.length === 0 && <p className="text-xs text-slate-600 py-1">Just you so far.</p>}
+            </div>
+            {/* Grant access — show members who aren't admins yet */}
+            {nonAdminMembers.length > 0 && (
+              <div className="border-t border-violet-500/15 px-4 py-3">
+                <p className="text-[10px] text-violet-400/70 mb-2 font-semibold uppercase tracking-wider">Grant admin access to a team member</p>
+                <div className="flex flex-wrap gap-2">
+                  {nonAdminMembers.map(m => (
+                    <button key={m.id} onClick={async () => {
+                      if (!confirm(`Make ${m.name} an admin? They'll see the Company tab and can manage this organisation.`)) return
+                      try { await orgUpdateMember(m.id, { org_role: 'org_admin' }); await reload() } catch (e) { alert(e.message) }
+                    }} className="flex items-center gap-1.5 bg-slate-700/60 hover:bg-violet-500/15 border border-slate-600/50 hover:border-violet-500/30 rounded-full px-2.5 py-1 transition-all group">
+                      <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
+                      <span className="text-xs text-slate-400 group-hover:text-violet-300 transition-colors">{m.name}</span>
+                      <Plus className="h-3 w-3 text-slate-600 group-hover:text-violet-400 transition-colors" />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
-          {/* Pending reports quick-view */}
-          {pendingCount > 0 && (
-            <div className="bg-slate-800/60 border border-amber-500/20 rounded-2xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-white flex items-center gap-2"><FileText className="h-4 w-4 text-amber-400" /> Needs Review</p>
-                <button onClick={() => setSection('reports')} className="text-xs text-amber-400 hover:text-amber-300 font-semibold">View all →</button>
-              </div>
-              <div className="space-y-2">
-                {allReports.filter(r => r.status === 'submitted').slice(0, 3).map(r => (
-                  <div key={r.id} className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-200 truncate">{r.title}</p>
-                      <p className="text-[11px] text-slate-500">{r.submitted_by_name} · {r.currency} {Number(r.total_amount).toFixed(2)}</p>
-                    </div>
-                    <div className="flex gap-1.5 shrink-0">
-                      <button onClick={() => { setReviewingReport({ report: r, action: 'approve' }); setReviewNote('') }}
-                        className="px-2.5 py-1 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg transition-colors">Approve</button>
-                      <button onClick={() => { setReviewingReport({ report: r, action: 'reject' }); setReviewNote('') }}
-                        className="px-2.5 py-1 text-[10px] font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors">Reject</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {/* Members quick-view */}
-          <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-bold text-white flex items-center gap-2"><Users className="h-4 w-4 text-blue-400" /> Team ({members.length})</p>
-              <button onClick={() => setSection('members')} className="text-xs text-blue-400 hover:text-blue-300 font-semibold">Manage →</button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {members.slice(0, 8).map(m => {
-                const rm = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
-                return (
-                  <div key={m.id} className="flex items-center gap-1.5 bg-slate-700/40 border border-slate-600/30 rounded-full px-2.5 py-1">
-                    <div className={`h-4 w-4 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[8px] font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
-                    <span className="text-[11px] text-slate-300">{m.name}</span>
-                  </div>
-                )
-              })}
-              {members.length > 8 && <span className="text-[11px] text-slate-500 px-2 py-1">+{members.length - 8} more</span>}
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* ── Admin Team ── */}
-      {section === 'admins' && (
-        <div className="space-y-3">
-          <div className="bg-violet-500/5 border border-violet-500/20 rounded-2xl p-4">
-            <div className="flex items-start gap-3 mb-3">
-              <Shield className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-bold text-white">Admin Team Access</p>
-                <p className="text-xs text-slate-400 mt-0.5">Admins and CEOs can see the Company tab and manage all org data — members, reports, departments. Grant access to share the workload.</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Current admins */}
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider px-1">Current Admins ({orgAdmins.length})</p>
-          {orgAdmins.length === 0 ? (
-            <p className="text-sm text-slate-600 text-center py-4">No co-admins yet. Promote a member below.</p>
-          ) : (
-            orgAdmins.map(a => {
-              const rm = ORG_ROLE_META[a.org_role] || ORG_ROLE_META.member
-              return (
-                <div key={a.id} className="bg-slate-800/60 border border-violet-500/20 rounded-2xl p-3.5 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>{a.name.charAt(0)}</div>
-                    <div>
-                      <p className="text-sm font-semibold text-slate-100">{a.name} {a.id === currentUser.id && <span className="text-[10px] text-slate-500">(you)</span>}</p>
-                      <p className="text-[11px] text-slate-500">{a.email}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${rm.color}`}>{rm.label}</span>
-                    {a.id !== currentUser.id && (
-                      <button onClick={async () => {
-                        if (!confirm(`Remove admin access from ${a.name}? They'll become a regular member.`)) return
-                        try { await orgUpdateMember(a.id, { org_role: 'member' }); await reload() } catch (e) { alert(e.message) }
-                      }} className="text-xs text-slate-500 hover:text-red-400 bg-slate-700/50 hover:bg-red-500/10 border border-slate-600/50 hover:border-red-500/30 px-2 py-1 rounded-lg transition-colors font-medium">
-                        Revoke
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )
-            })
-          )}
-
-          {/* Promote a member */}
-          {nonAdminMembers.length > 0 && (
-            <>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider px-1 pt-2">Grant Admin Access</p>
-              <div className="space-y-2">
-                {nonAdminMembers.map(m => {
-                  const rm = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
-                  return (
-                    <div key={m.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
-                        <div>
-                          <p className="text-sm font-semibold text-slate-200">{m.name}</p>
-                          <p className="text-[11px] text-slate-500">{m.email}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${rm.color}`}>{rm.label}</span>
-                        <button onClick={async () => {
-                          if (!confirm(`Grant admin access to ${m.name}? They'll see the Company tab and can manage this organisation.`)) return
-                          try { await orgUpdateMember(m.id, { org_role: 'org_admin' }); await reload() } catch (e) { alert(e.message) }
-                        }} className="text-xs text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/25 px-2.5 py-1 rounded-lg transition-colors font-bold">
-                          + Make Admin
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── Members ── */}
-      {section === 'members' && (
-        <div className="space-y-3">
+          {/* Add / Create buttons */}
           <div className="flex gap-2">
             <button onClick={() => setShowAdd(true)}
               className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 rounded-xl transition-colors">
