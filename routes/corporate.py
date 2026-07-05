@@ -626,10 +626,12 @@ def add_report_item(
         status         = "active",
     )
     db.add(expense)
-    db.flush()
+    db.commit()
+    db.refresh(report)
     report.total_amount = sum(float(e.amount) for e in report.expenses)
     report.updated_at   = datetime.utcnow()
     db.commit()
+    db.refresh(report)
     return _fmt_report(report)
 
 
