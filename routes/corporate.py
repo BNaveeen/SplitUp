@@ -5,11 +5,15 @@ from sqlalchemy.orm import Session
 
 from database import User, Organisation, Department, ExpenseReport, Expense
 from routes.deps import get_db, get_current_user_id
+from passlib.context import CryptContext
 from schemas import (
     OrgCreate, OrgResponse, DeptCreate, DeptResponse,
     AssignCorporateRequest, ReportCreate, ReportUpdate,
     ReportReviewRequest, ReportResponse, ReportExpenseItem,
+    OrgMemberUpdate, OrgAddMemberRequest, OrgCreateMemberRequest,
 )
+
+_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 router = APIRouter()
 
@@ -18,6 +22,15 @@ def _require_admin(uid: int, db: Session) -> User:
     u = db.query(User).filter(User.id == uid, User.is_admin == True).first()
     if not u:
         raise HTTPException(status_code=403, detail="Admin only")
+    return u
+
+
+def _require_org_admin(uid: int, db: Session) -> User:
+    u = db.query(User).filter(User.id == uid).first()
+    if not u or not u.organisation_id:
+        raise HTTPException(status_code=403, detail="Not in an organisation")
+    if u.org_role != "org_admin" and not u.is_admin:
+        raise HTTPException(status_code=403, detail="Org admin access required")
     return u
 
 
@@ -154,6 +167,14 @@ def admin_assign_corporate(
     user.department_id   = body.department_id
     user.manager_id      = body.manager_id
     user.employee_id     = body.employee_id
+    if body.org_role is not None:
+        user.org_role = body.org_role or None
+    # Auto-set org_role to 'member' when assigning to an org
+    if body.organisation_id and not user.org_role:
+        user.org_role = "member"
+    # Clear org_role when removing from org
+    if body.organisation_id is None:
+        user.org_role = None
     db.commit()
     return {
         "user_id": user_id,
@@ -161,7 +182,194 @@ def admin_assign_corporate(
         "department_id": user.department_id,
         "manager_id": user.manager_id,
         "employee_id": user.employee_id,
+        "org_role": user.org_role,
     }
+
+
+# ── Org Admin: manage their own organisation ─────────────────────────────────
+
+def _fmt_member(u: User, org: Organisation) -> dict:
+    return {
+        "id": u.id,
+        "name": u.name,
+        "email": u.email,
+        "org_role": u.org_role or "member",
+        "department_id": u.department_id,
+        "department_name": u.department.name if u.department else None,
+        "manager_id": u.manager_id,
+        "manager_name": u.manager.name if u.manager else None,
+        "employee_id": u.employee_id,
+    }
+
+
+@router.get("/my/org/members")
+def org_list_members(
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    members = db.query(User).filter(User.organisation_id == admin.organisation_id).all()
+    org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
+    return [_fmt_member(m, org) for m in members]
+
+
+@router.get("/my/org/stats")
+def org_stats(
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    oid = admin.organisation_id
+    member_count  = db.query(User).filter(User.organisation_id == oid).count()
+    report_counts = {}
+    for status in ("draft", "submitted", "approved", "rejected", "reimbursed"):
+        report_counts[status] = db.query(ExpenseReport).filter(
+            ExpenseReport.organisation_id == oid,
+            ExpenseReport.status == status,
+        ).count()
+    org = db.query(Organisation).filter(Organisation.id == oid).first()
+    depts = db.query(Department).filter(Department.organisation_id == oid).all()
+    return {
+        "member_count": member_count,
+        "report_counts": report_counts,
+        "org_name": org.name if org else "?",
+        "departments": [{"id": d.id, "name": d.name} for d in depts],
+    }
+
+
+@router.get("/my/org/all-reports")
+def org_all_reports(
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    reports = db.query(ExpenseReport).filter(
+        ExpenseReport.organisation_id == admin.organisation_id
+    ).order_by(ExpenseReport.updated_at.desc()).all()
+    return [_fmt_report(r) for r in reports]
+
+
+@router.post("/my/org/members/add")
+def org_add_existing_member(
+    body: OrgAddMemberRequest,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    user = db.query(User).filter(User.email == body.email.lower().strip()).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found with that email")
+    if user.organisation_id and user.organisation_id != admin.organisation_id:
+        raise HTTPException(status_code=400, detail="User already belongs to another organisation")
+    user.organisation_id = admin.organisation_id
+    user.department_id   = body.department_id
+    user.manager_id      = body.manager_id
+    user.org_role        = body.org_role or "member"
+    db.commit()
+    org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
+    return _fmt_member(user, org)
+
+
+@router.post("/my/org/members/create")
+def org_create_member(
+    body: OrgCreateMemberRequest,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    if db.query(User).filter(User.email == body.email.lower().strip()).first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    user = User(
+        name            = body.name.strip(),
+        email           = body.email.lower().strip(),
+        password        = _pwd.hash(body.password),
+        is_verified     = True,
+        organisation_id = admin.organisation_id,
+        department_id   = body.department_id,
+        manager_id      = body.manager_id,
+        org_role        = body.org_role or "member",
+    )
+    db.add(user); db.commit(); db.refresh(user)
+    org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
+    return _fmt_member(user, org)
+
+
+@router.put("/my/org/members/{user_id}")
+def org_update_member(
+    user_id: int,
+    body: OrgMemberUpdate,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    user = db.query(User).filter(
+        User.id == user_id,
+        User.organisation_id == admin.organisation_id,
+    ).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found in your organisation")
+    if body.department_id is not None: user.department_id = body.department_id or None
+    if body.manager_id    is not None: user.manager_id    = body.manager_id or None
+    if body.org_role      is not None: user.org_role      = body.org_role or "member"
+    if body.employee_id   is not None: user.employee_id   = body.employee_id or None
+    db.commit()
+    org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
+    return _fmt_member(user, org)
+
+
+@router.delete("/my/org/members/{user_id}")
+def org_remove_member(
+    user_id: int,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    if user_id == uid:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+    user = db.query(User).filter(
+        User.id == user_id,
+        User.organisation_id == admin.organisation_id,
+    ).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found in your organisation")
+    user.organisation_id = None
+    user.department_id   = None
+    user.manager_id      = None
+    user.org_role        = None
+    db.commit()
+    return {"message": f"{user.name} removed from organisation"}
+
+
+@router.post("/my/org/departments")
+def org_create_department(
+    body: DeptCreate,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    dept = Department(name=body.name.strip(), organisation_id=admin.organisation_id)
+    db.add(dept); db.commit(); db.refresh(dept)
+    return {"id": dept.id, "name": dept.name}
+
+
+@router.delete("/my/org/departments/{dept_id}")
+def org_delete_department(
+    dept_id: int,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    dept = db.query(Department).filter(
+        Department.id == dept_id,
+        Department.organisation_id == admin.organisation_id,
+    ).first()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+    db.query(User).filter(User.department_id == dept_id).update({"department_id": None}, synchronize_session=False)
+    db.delete(dept); db.commit()
+    return {"message": "Department deleted"}
 
 
 # ── My Organisation info ──────────────────────────────────────────────────────

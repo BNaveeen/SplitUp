@@ -374,6 +374,18 @@ export const adminCreateDept      = (orgId, name) => apiFetch(`/admin/organisati
 export const adminDeleteDept      = (orgId, deptId) => apiFetch(`/admin/organisations/${orgId}/departments/${deptId}`, { method: 'DELETE' })
 export const adminAssignCorporate = (userId, data) => apiFetch(`/admin/users/${userId}/corporate`, { method: 'PUT', body: JSON.stringify(data) })
 
+// ── Corporate: Org Admin ──────────────────────────────────────────────────────
+
+export const orgListMembers    = () => apiFetch('/my/org/members').catch(() => [])
+export const orgStats          = () => apiFetch('/my/org/stats').catch(() => null)
+export const orgAllReports     = () => apiFetch('/my/org/all-reports').catch(() => [])
+export const orgAddMember      = (data) => apiFetch('/my/org/members/add', { method: 'POST', body: JSON.stringify(data) })
+export const orgCreateMember   = (data) => apiFetch('/my/org/members/create', { method: 'POST', body: JSON.stringify(data) })
+export const orgUpdateMember   = (userId, data) => apiFetch(`/my/org/members/${userId}`, { method: 'PUT', body: JSON.stringify(data) })
+export const orgRemoveMember   = (userId) => apiFetch(`/my/org/members/${userId}`, { method: 'DELETE' })
+export const orgCreateDept     = (name) => apiFetch('/my/org/departments', { method: 'POST', body: JSON.stringify({ name }) })
+export const orgDeleteDept     = (deptId) => apiFetch(`/my/org/departments/${deptId}`, { method: 'DELETE' })
+
 // ── Corporate: My Org ─────────────────────────────────────────────────────────
 
 export const fetchMyOrg       = () => apiFetch('/my/org').catch(() => null)

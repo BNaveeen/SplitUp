@@ -84,6 +84,7 @@ class User(Base):
     department_id   = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
     manager_id      = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     employee_id     = Column(String, nullable=True)
+    org_role        = Column(String(20), nullable=True)  # null | 'member' | 'manager' | 'org_admin'
 
     groups        = relationship("Group", secondary=group_members, back_populates="members")
     expenses_paid = relationship("Expense", foreign_keys="[Expense.payer_id]", back_populates="payer")

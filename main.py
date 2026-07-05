@@ -182,6 +182,8 @@ async def startup_event():
         # Corporate columns for expenses
         "ALTER TABLE expenses ADD COLUMN currency TEXT DEFAULT 'GBP'",
         "ALTER TABLE expenses ADD COLUMN report_id INTEGER",
+        # org_role on users
+        "ALTER TABLE users ADD COLUMN org_role TEXT",
     ]:
         mig_db = SessionLocal()
         try:

@@ -36,6 +36,7 @@ class UserResponse(BaseModel):
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
     employee_id: Optional[str] = None
+    org_role: Optional[str] = None  # null | 'member' | 'manager' | 'org_admin'
 
     class Config:
         from_attributes = True
@@ -321,6 +322,27 @@ class AssignCorporateRequest(BaseModel):
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
     employee_id: Optional[str] = None
+    org_role: Optional[str] = None
+
+class OrgMemberUpdate(BaseModel):
+    department_id: Optional[int] = None
+    manager_id: Optional[int] = None
+    org_role: Optional[str] = None   # 'member' | 'manager' | 'org_admin'
+    employee_id: Optional[str] = None
+
+class OrgAddMemberRequest(BaseModel):
+    email: str                        # add existing user by email
+    department_id: Optional[int] = None
+    manager_id: Optional[int] = None
+    org_role: str = 'member'
+
+class OrgCreateMemberRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    department_id: Optional[int] = None
+    manager_id: Optional[int] = None
+    org_role: str = 'member'
 
 class ReportCreate(BaseModel):
     title: str
