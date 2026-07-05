@@ -32,6 +32,10 @@ class UserResponse(BaseModel):
     name: str
     email: str
     is_admin: bool = False
+    organisation_id: Optional[int] = None
+    department_id: Optional[int] = None
+    manager_id: Optional[int] = None
+    employee_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -287,3 +291,81 @@ class GroupBudgetResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Corporate schemas ─────────────────────────────────────────────────────────
+
+class OrgCreate(BaseModel):
+    name: str
+    domain: Optional[str] = None
+
+class OrgResponse(BaseModel):
+    id: int
+    name: str
+    domain: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class DeptCreate(BaseModel):
+    name: str
+
+class DeptResponse(BaseModel):
+    id: int
+    name: str
+    organisation_id: int
+    class Config:
+        from_attributes = True
+
+class AssignCorporateRequest(BaseModel):
+    organisation_id: Optional[int] = None
+    department_id: Optional[int] = None
+    manager_id: Optional[int] = None
+    employee_id: Optional[str] = None
+
+class ReportCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    currency: str = "GBP"
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+
+class ReportUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    currency: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+
+class ReportReviewRequest(BaseModel):
+    notes: Optional[str] = None
+
+class ReportExpenseItem(BaseModel):
+    id: int
+    description: str
+    amount: float
+    currency: Optional[str] = "GBP"
+    category: Optional[str] = None
+    date: Optional[str] = None
+    receipt_image: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class ReportResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    status: str
+    currency: str
+    total_amount: float
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    created_at: str
+    updated_at: str
+    submitted_by_name: str
+    organisation_name: str
+    department_name: Optional[str] = None
+    manager_name: Optional[str] = None
+    reviewed_by_name: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    review_notes: Optional[str] = None
+    expenses: List[ReportExpenseItem] = []

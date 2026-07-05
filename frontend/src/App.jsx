@@ -7,7 +7,7 @@ import {
   TrendingUp, X, Calendar, Home, Activity, Send, Mail, Phone, Search,
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
   KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText,
-  Moon, Sun
+  Moon, Sun, Briefcase, Building2, ClipboardList, ChevronDown, AlertCircle, Clock, Inbox
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -23,6 +23,9 @@ import {
   verifyEmail, resendVerification, forgotPassword, resetPassword, changePassword,
   fetchSubscription, fetchPlans, fetchGroupBudget, setGroupBudget, deleteGroupBudget,
   adminGetSubscriptions, adminSetUserPlan, adminGetFeatureFlags, adminUpdateFeatureFlag,
+  adminListOrgs, adminCreateOrg, adminDeleteOrg, adminCreateDept, adminDeleteDept, adminAssignCorporate,
+  fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
+  addExpenseToReport, removeExpenseFromReport, fetchMyApprovals, approveReport, rejectReport, reimburseReport,
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -1099,14 +1102,11 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   }
 
   const tabs = [
-    { id: 'groups',   label: 'Groups',   icon: Home,     feature: null,         requiredPlan: null },
-    { id: 'activity', label: 'Activity', icon: Activity, feature: null,         requiredPlan: null },
-    { id: 'people',   label: 'People',   icon: Users,    feature: 'people_tab', requiredPlan: 'business' },
+    { id: 'groups',   label: 'Groups',   icon: Home,      feature: null,         requiredPlan: null },
+    { id: 'activity', label: 'Activity', icon: Activity,  feature: null,         requiredPlan: null },
+    { id: 'people',   label: 'People',   icon: Users,     feature: 'people_tab', requiredPlan: 'business' },
+    ...(user.organisation_id ? [{ id: 'work', label: 'Work', icon: Briefcase, feature: null, requiredPlan: null }] : []),
   ]
-
-  if (showAdmin) {
-    return <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} onWipe={loadData} />
-  }
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-screen flex flex-col z-10 relative">
@@ -1120,11 +1120,15 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
                 <ArrowLeft className="h-5 w-5" />
               </button>
             ) : (
-              <div className="h-8 w-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <button onClick={() => { setShowAdmin(false); setGroup(null); setFocusExpenseId(null); setActiveTab('groups') }}
+                className="h-8 w-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center hover:opacity-80 transition-opacity">
                 <Wallet className="h-4 w-4 text-white" />
-              </div>
+              </button>
             )}
-            <span className="font-bold text-white text-lg">{selectedGroup ? selectedGroup.name : 'SplitWise'}</span>
+            <button onClick={() => { setShowAdmin(false); setGroup(null); setFocusExpenseId(null); setActiveTab('groups') }}
+              className="font-bold text-white text-lg hover:text-indigo-300 transition-colors">
+              {selectedGroup ? selectedGroup.name : 'SplitWise'}
+            </button>
           </div>
           <div className="flex items-center gap-2">
             {pendingSettlements.length > 0 && (
@@ -1288,116 +1292,139 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
         )}
       </AnimatePresence>
 
-      {/* Main content: group view or dashboard tabs */}
-      {selectedGroup ? (
+      {/* Main content — changes per tab / group drill-in / admin */}
+      {showAdmin ? (
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} onWipe={loadData} />
+        </div>
+      ) : selectedGroup ? (
         <ErrorBoundary>
-          <GroupDetailView
-            key={selectedGroup.id}
-            group={selectedGroup}
-            currentUser={user}
-            allUsers={users}
-            allGroups={groups}
-            onBack={() => { setGroup(null); setFocusExpenseId(null); }}
-            onGroupUpdated={loadData}
-            focusExpenseId={focusExpenseId}
-            initiatedSettlements={initiatedSettlements}
-            userPlan={userPlan}
-            hasFeature={hasFeature}
-            getLimit={getLimit}
-            onUpgradeRequired={setUpgradeModal}
-          />
+          <div className="flex-1 overflow-y-auto pb-20">
+            <GroupDetailView
+              key={selectedGroup.id}
+              group={selectedGroup}
+              currentUser={user}
+              allUsers={users}
+              allGroups={groups}
+              onBack={() => { setGroup(null); setFocusExpenseId(null); }}
+              onGroupUpdated={loadData}
+              focusExpenseId={focusExpenseId}
+              initiatedSettlements={initiatedSettlements}
+              userPlan={userPlan}
+              hasFeature={hasFeature}
+              getLimit={getLimit}
+              onUpgradeRequired={setUpgradeModal}
+            />
+          </div>
         </ErrorBoundary>
       ) : (
-        <>
-          <main className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
-            {loading ? (
-              <div className="flex flex-col justify-center items-center h-64 gap-4">
-                <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
-                {slowLoad && (
-                  <div className="text-center px-6">
-                    <p className="text-slate-300 text-sm font-medium">Server is waking up…</p>
-                    <p className="text-slate-500 text-xs mt-1">This takes ~30s on first load. Hang tight!</p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <AnimatePresence mode="wait">
-                <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-                  {activeTab === 'groups' && (
-                    <GroupsTab groups={groups} currentUser={user} onSelectGroup={setGroup} onGroupCreated={loadData} hasFeature={hasFeature} getLimit={getLimit} onUpgradeRequired={setUpgradeModal} userPlan={userPlan} />
-                  )}
-                  {activeTab === 'activity' && (
-                    <ActivityTab currentUser={user} groups={groups} hasFeature={hasFeature} onUpgradeRequired={setUpgradeModal} />
-                  )}
-                  {activeTab === 'people' && (
-                    hasFeature('people_tab') || userPlan.plan === 'business'
-                      ? <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} pendingSettlements={pendingSettlements} allSettlements={allSettlements} onSettle={loadData} />
-                      : <div className="flex flex-col items-center justify-center py-24 text-center">
-                          <Users className="h-12 w-12 text-slate-700 mb-4" />
-                          <p className="font-semibold text-slate-300">People tab requires Business</p>
-                          <p className="text-sm text-slate-500 mt-1 mb-4">See all contacts, global balances, and settle with anyone.</p>
-                          <button onClick={() => setUpgradeModal({ feature: 'people_tab', upgrade_to: 'business', current_plan: userPlan.plan })} className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl hover:opacity-90 transition-opacity">Upgrade to Business</button>
-                        </div>
-                  )}
-                </motion.div>
-              </AnimatePresence>
-            )}
-          </main>
-
-          {/* Bottom nav */}
-          <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-xl border-t border-slate-700/40">
-            <div className="max-w-2xl mx-auto flex items-center justify-around h-16 px-4 relative">
-              {tabs.map(tab => {
-                const isLocked = tab.feature && !hasFeature(tab.feature)
-                const TabIcon = tab.icon
-                return (
-                  <button key={tab.id}
-                    onClick={() => isLocked
-                      ? setUpgradeModal({ feature: tab.feature, upgrade_to: tab.requiredPlan, current_plan: userPlan.plan })
-                      : setActiveTab(tab.id)}
-                    className={`flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl transition-all ${
-                      isLocked
-                        ? 'text-slate-600'
-                        : activeTab === tab.id
-                          ? 'text-indigo-400'
-                          : 'text-slate-500 hover:text-slate-300'
-                    }`}>
-                    <div className="relative">
-                      <TabIcon className={`h-5 w-5 ${activeTab === tab.id && !isLocked ? 'stroke-2' : ''}`} />
-                      {isLocked && (
-                        <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-indigo-600 rounded-full flex items-center justify-center shadow">
-                          <Zap className="h-2 w-2 text-white" />
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[10px] font-medium">{tab.label}</span>
-                  </button>
-                )
-              })}
-              <button
-                onClick={() => setAddExp(true)}
-                className="absolute -top-7 left-1/2 -translate-x-1/2 h-14 w-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/40 hover:scale-110 transition-transform active:scale-95">
-                <Plus className="h-7 w-7 text-white" />
-              </button>
+        <main className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
+          {loading ? (
+            <div className="flex flex-col justify-center items-center h-64 gap-4">
+              <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
+              {slowLoad && (
+                <div className="text-center px-6">
+                  <p className="text-slate-300 text-sm font-medium">Server is waking up…</p>
+                  <p className="text-slate-500 text-xs mt-1">This takes ~30s on first load. Hang tight!</p>
+                </div>
+              )}
             </div>
-          </div>
-
-          {/* Add Expense Modal */}
-          <AnimatePresence>
-            {showAddExpense && (
-              <AddExpenseModal
-                currentUser={user}
-                users={users}
-                groups={groups}
-                onClose={() => setAddExp(false)}
-                onSuccess={handleExpenseAdded}
-                hasFeature={hasFeature}
-                onUpgradeRequired={setUpgradeModal}
-              />
-            )}
-          </AnimatePresence>
-        </>
+          ) : (
+            <AnimatePresence mode="wait">
+              <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+                {activeTab === 'groups' && (
+                  <GroupsTab groups={groups} currentUser={user} onSelectGroup={setGroup} onGroupCreated={loadData} hasFeature={hasFeature} getLimit={getLimit} onUpgradeRequired={setUpgradeModal} userPlan={userPlan} />
+                )}
+                {activeTab === 'activity' && (
+                  <ActivityTab currentUser={user} groups={groups} hasFeature={hasFeature} onUpgradeRequired={setUpgradeModal} />
+                )}
+                {activeTab === 'people' && (
+                  hasFeature('people_tab') || userPlan.plan === 'business'
+                    ? <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} pendingSettlements={pendingSettlements} allSettlements={allSettlements} onSettle={loadData} />
+                    : <div className="flex flex-col items-center justify-center py-24 text-center">
+                        <Users className="h-12 w-12 text-slate-700 mb-4" />
+                        <p className="font-semibold text-slate-300">People tab requires Business</p>
+                        <p className="text-sm text-slate-500 mt-1 mb-4">See all contacts, global balances, and settle with anyone.</p>
+                        <button onClick={() => setUpgradeModal({ feature: 'people_tab', upgrade_to: 'business', current_plan: userPlan.plan })} className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl hover:opacity-90 transition-opacity">Upgrade to Business</button>
+                      </div>
+                )}
+                {activeTab === 'work' && (
+                  <WorkTab currentUser={user} />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          )}
+        </main>
       )}
+
+      {/* Bottom nav — always visible */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/90 backdrop-blur-xl border-t border-slate-700/40">
+        {showAdmin ? (
+          <div className="max-w-2xl mx-auto flex items-center justify-center h-16">
+            <button onClick={() => setShowAdmin(false)}
+              className="flex flex-col items-center gap-0.5 px-8 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-all">
+              <ArrowLeft className="h-5 w-5" />
+              <span className="text-[10px] font-medium">Back to App</span>
+            </button>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto flex items-center justify-around h-16 px-4 relative">
+            {tabs.map(tab => {
+              const isLocked = tab.feature && !hasFeature(tab.feature)
+              const TabIcon = tab.icon
+              return (
+                <button key={tab.id}
+                  onClick={() => {
+                    if (isLocked) {
+                      setUpgradeModal({ feature: tab.feature, upgrade_to: tab.requiredPlan, current_plan: userPlan.plan })
+                    } else {
+                      setGroup(null)
+                      setFocusExpenseId(null)
+                      setActiveTab(tab.id)
+                    }
+                  }}
+                  className={`flex flex-col items-center gap-0.5 px-4 py-2 rounded-xl transition-all ${
+                    isLocked
+                      ? 'text-slate-600'
+                      : !selectedGroup && activeTab === tab.id
+                        ? 'text-indigo-400'
+                        : 'text-slate-500 hover:text-slate-300'
+                  }`}>
+                  <div className="relative">
+                    <TabIcon className={`h-5 w-5 ${!selectedGroup && activeTab === tab.id && !isLocked ? 'stroke-2' : ''}`} />
+                    {isLocked && (
+                      <span className="absolute -top-1.5 -right-1.5 h-3.5 w-3.5 bg-indigo-600 rounded-full flex items-center justify-center shadow">
+                        <Zap className="h-2 w-2 text-white" />
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-medium">{tab.label}</span>
+                </button>
+              )
+            })}
+            <button
+              onClick={() => setAddExp(true)}
+              className="absolute -top-7 left-1/2 -translate-x-1/2 h-14 w-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/40 hover:scale-110 transition-transform active:scale-95">
+              <Plus className="h-7 w-7 text-white" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Add Expense Modal */}
+      <AnimatePresence>
+        {showAddExpense && (
+          <AddExpenseModal
+            currentUser={user}
+            users={users}
+            groups={groups}
+            onClose={() => setAddExp(false)}
+            onSuccess={handleExpenseAdded}
+            hasFeature={hasFeature}
+            onUpgradeRequired={setUpgradeModal}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }
@@ -2553,15 +2580,22 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [subUsers, setSubUsers]             = useState([])
   const [featureFlags, setFeatureFlags]     = useState({})
   const [planUpdating, setPlanUpdating]     = useState(null)
+  const [adminOrgs, setAdminOrgs]           = useState([])
+  const [newOrgName, setNewOrgName]         = useState('')
+  const [newOrgDomain, setNewOrgDomain]     = useState('')
+  const [newDeptName, setNewDeptName]       = useState('')
+  const [orgLoading, setOrgLoading]         = useState(false)
+  const [orgAssignUser, setOrgAssignUser]   = useState(null)
 
   const TABS = [
-    { id: 'overview',       label: 'Overview',  icon: LayoutGrid },
-    { id: 'users',          label: 'Users',     icon: Users },
-    { id: 'groups',         label: 'Groups',    icon: Home },
-    { id: 'expenses',       label: 'Expenses',  icon: Receipt },
-    { id: 'settlements',    label: 'Settle',    icon: CheckCircle2 },
-    { id: 'notifications',  label: 'Alerts',    icon: Bell },
-    { id: 'subscriptions',  label: 'Plans',     icon: CreditCard },
+    { id: 'overview',       label: 'Overview',  full: 'Overview',      icon: LayoutGrid },
+    { id: 'users',          label: 'Users',     full: 'Users',         icon: Users },
+    { id: 'groups',         label: 'Groups',    full: 'Groups',        icon: Home },
+    { id: 'expenses',       label: 'Expenses',  full: 'Expenses',      icon: Receipt },
+    { id: 'settlements',    label: 'Settle',    full: 'Settlements',   icon: CheckCircle2 },
+    { id: 'notifications',  label: 'Alerts',    full: 'Notifications', icon: Bell },
+    { id: 'subscriptions',  label: 'Plans',     full: 'Subscriptions', icon: CreditCard },
+    { id: 'organisations',  label: 'Orgs',      full: 'Organisations', icon: Building2 },
   ]
 
   const loadTab = useCallback(async (tab) => {
@@ -2583,10 +2617,13 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
       } else if (tab === 'subscriptions') {
         const [su, ff] = await Promise.all([adminGetSubscriptions(), adminGetFeatureFlags()])
         setSubUsers(su); setFeatureFlags(ff)
+      } else if (tab === 'organisations') {
+        const [orgs, u] = await Promise.all([adminListOrgs(), fetchAdminUsers()])
+        setAdminOrgs(orgs); setUsers(u)
       }
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
-  }, [currentUser.id, expenseFilter, notifUser])
+  }, [expenseFilter, notifUser])
 
   useEffect(() => { loadTab(activeTab) }, [activeTab, expenseFilter, notifUser])
 
@@ -2637,10 +2674,10 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const ActiveTabIcon = activeTabMeta.icon
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen flex bg-[#0f1117]">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex min-h-0 bg-[#0f1117] overflow-hidden">
 
       {/* ── Left Sidebar ── */}
-      <aside className="w-16 shrink-0 bg-slate-900 border-r border-slate-800/60 flex flex-col sticky top-0 h-screen z-40">
+      <aside className="w-16 shrink-0 bg-slate-900 border-r border-slate-800/60 flex flex-col z-40 overflow-y-auto">
         {/* Logo */}
         <div className="h-14 flex items-center justify-center border-b border-slate-800/60 shrink-0">
           <div className="h-8 w-8 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center">
@@ -2655,9 +2692,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
             return (
               <button key={t.id}
                 onClick={() => { setActiveTab(t.id); setSearchQuery('') }}
-                title={['settlements','notifications','subscriptions'].includes(t.id)
-                  ? { settlements:'Settlements', notifications:'Notifications', subscriptions:'Subscriptions' }[t.id]
-                  : t.label}
+                title={t.full}
                 className={`flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-wider transition-all ${
                   activeTab === t.id
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/25'
@@ -2670,19 +2705,6 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
           })}
         </nav>
 
-        {/* Back button */}
-        <div className="px-1.5 pb-3 border-t border-slate-800/60 pt-3 shrink-0">
-          <button onClick={onBack} title="Back to app"
-            className="flex flex-col items-center gap-1 w-full py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-slate-800/70 transition-all">
-            <ArrowLeft className="h-4 w-4" />
-            <span>Back</span>
-          </button>
-          {/* Build hash */}
-          <p className="text-center text-[8px] font-mono text-slate-700 mt-2 leading-tight select-all"
-            title={`Built ${__GIT_DATE__}`}>
-            {__GIT_HASH__}
-          </p>
-        </div>
       </aside>
 
       {/* ── Main content area ── */}
@@ -2693,13 +2715,13 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
             <ActiveTabIcon className="h-5 w-5 text-amber-400" />
             <div>
               <h1 className="font-bold text-white text-sm leading-tight">{activeTabMeta.label}</h1>
-              <p className="text-[10px] text-slate-500 leading-tight hidden sm:block">Admin Portal · {currentUser.name}</p>
+              <p className="text-[10px] text-slate-500 leading-tight">Admin Portal</p>
             </div>
           </div>
           <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">Admin</span>
         </div>
 
-        <div className="flex-1 px-5 py-5">
+        <div className="flex-1 px-5 py-5 pb-20">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3">
             <Loader2 className="animate-spin h-8 w-8 text-amber-500" />
@@ -2742,27 +2764,6 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                     <p className="text-[10px] text-slate-500 mt-0.5">{s.label}</p>
                   </div>
                 ))}
-              </div>
-
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-white">All Users</p>
-                  <span className="text-xs text-slate-500">{users.length} registered</span>
-                </div>
-                <div className="divide-y divide-slate-700/30 max-h-60 overflow-y-auto custom-scrollbar">
-                  {users.map(u => (
-                    <div key={u.id} className="px-5 py-3 flex items-center gap-3">
-                      <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-xs font-bold text-white`}>
-                        {u.name.charAt(0)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-200 truncate">{u.name}</p>
-                        <p className="text-xs text-slate-500 truncate">{u.email}</p>
-                      </div>
-                      {u.is_admin && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-bold uppercase tracking-wider shrink-0">Admin</span>}
-                    </div>
-                  ))}
-                </div>
               </div>
 
               {/* Danger Zone */}
@@ -2891,7 +2892,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                         {u.id === currentUser.id && <span className="text-[10px] text-indigo-400">(You)</span>}
                         {u.is_admin && <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-bold uppercase tracking-wider">Admin</span>}
                       </div>
-                      <p className="text-xs text-slate-500">{u.email} · ID: {u.id}</p>
+                      <p className="text-xs text-slate-500">{u.email}</p>
                     </div>
                     {u.id !== currentUser.id && (
                       <div className="flex items-center gap-2 shrink-0">
@@ -2929,7 +2930,6 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                       <div className="flex gap-4 text-xs text-slate-400 mt-1">
                         <span>{g.member_count} member{g.member_count !== 1 ? 's' : ''}</span>
                         <span>{g.expense_count} active expense{g.expense_count !== 1 ? 's' : ''}</span>
-                        <span className="text-slate-600">ID: {g.id}</span>
                       </div>
                       {g.members?.length > 0 && (
                         <div className="flex gap-1.5 mt-2.5 flex-wrap">
@@ -3028,19 +3028,29 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
           /* ── Notifications ── */
           ) : activeTab === 'notifications' ? (
             <div className="space-y-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex-1 min-w-[180px]">
-                  <select value={notifUser?.id || ''}
-                    onChange={e => setNotifUser(parseInt(e.target.value) ? users.find(u => u.id === parseInt(e.target.value)) || null : null)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-amber-500 appearance-none">
-                    <option value="">All users</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
-                  </select>
-                </div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Filter by user</p>
                 <button onClick={() => loadTab('notifications')}
-                  className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-slate-300 hover:text-white transition-colors shrink-0">
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-slate-300 hover:text-white transition-colors shrink-0">
                   <Activity className="h-3.5 w-3.5" /> Refresh
                 </button>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setNotifUser(null)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${!notifUser ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'}`}>
+                  All
+                </button>
+                {users.map(u => (
+                  <button key={u.id}
+                    onClick={() => setNotifUser(u)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${notifUser?.id === u.id ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'}`}>
+                    <span className={`h-4 w-4 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-[8px] font-bold text-white shrink-0`}>
+                      {u.name.charAt(0).toUpperCase()}
+                    </span>
+                    {u.name}
+                  </button>
+                ))}
               </div>
 
               <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
@@ -3064,7 +3074,6 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                           <span className="text-xs font-semibold text-amber-400">{n.user_name}</span>
-                          <span className="text-[10px] text-slate-600">ID: {n.user_id}</span>
                           {!n.is_read && <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0"></span>}
                         </div>
                         <p className="text-xs text-slate-300">{n.message}</p>
@@ -3086,31 +3095,39 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                 <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><Users className="h-4 w-4 text-amber-400" /> User Plans</h3>
                 <div className="space-y-2">
                   {subUsers.map(u => (
-                    <div key={u.id} className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-xl px-4 py-3">
-                      <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-                        {u.name.charAt(0)}
+                    <div key={u.id} className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/30 rounded-2xl px-4 py-3 hover:border-slate-600/50 transition-colors">
+                      <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-sm font-bold text-white shrink-0`}>
+                        {u.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-100 truncate">{u.name}</p>
                         <p className="text-[10px] text-slate-500 truncate">{u.email}</p>
                       </div>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${PLAN_COLOR[u.plan] || PLAN_COLOR.free}`}>
-                        {PLAN_LABEL[u.plan] || u.plan}
-                      </span>
-                      <select
-                        value={u.plan}
-                        onChange={async (e) => {
-                          setPlanUpdating(u.id)
-                          try {
-                            await adminSetUserPlan(u.id, e.target.value)
-                            setSubUsers(p => p.map(x => x.id === u.id ? { ...x, plan: e.target.value } : x))
-                          } catch (err) { alert(err.message) }
-                          finally { setPlanUpdating(null) }
-                        }}
-                        disabled={planUpdating === u.id}
-                        className="bg-slate-700 border border-slate-600 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-amber-500 disabled:opacity-50">
-                        {['free', 'pro', 'business'].map(p => <option key={p} value={p}>{PLAN_LABEL[p]}</option>)}
-                      </select>
+                      {planUpdating === u.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-amber-400 shrink-0" />
+                      ) : null}
+                      <div className="flex gap-1 shrink-0">
+                        {[
+                          { key: 'free',     label: 'Free', active: 'bg-slate-600 text-slate-100 border border-slate-500',             inactive: 'text-slate-600 hover:text-slate-400 border border-transparent' },
+                          { key: 'pro',      label: 'Pro',  active: 'bg-indigo-500/25 text-indigo-300 border border-indigo-500/50',     inactive: 'text-slate-600 hover:text-indigo-400 border border-transparent' },
+                          { key: 'business', label: 'Biz',  active: 'bg-amber-500/20 text-amber-300 border border-amber-500/40',       inactive: 'text-slate-600 hover:text-amber-400 border border-transparent' },
+                        ].map(({ key, label, active, inactive }) => (
+                          <button key={key}
+                            disabled={planUpdating === u.id}
+                            onClick={async () => {
+                              if (u.plan === key) return
+                              const prev = u.plan
+                              setPlanUpdating(u.id)
+                              setSubUsers(p => p.map(x => x.id === u.id ? { ...x, plan: key } : x))
+                              try { await adminSetUserPlan(u.id, key) }
+                              catch (err) { alert(err.message); setSubUsers(p => p.map(x => x.id === u.id ? { ...x, plan: prev } : x)) }
+                              finally { setPlanUpdating(null) }
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all disabled:opacity-40 ${u.plan === key ? active : inactive}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ))}
                   {subUsers.length === 0 && <p className="text-sm text-slate-500 text-center py-8">No users found</p>}
@@ -3173,6 +3190,110 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                     <p className="text-sm text-slate-500 text-center py-8">No feature flags found. Backend may not have seeded defaults yet.</p>
                   )}
                 </div>
+              </div>
+            </div>
+
+          ) : activeTab === 'organisations' ? (
+            <div className="space-y-6">
+              {/* Create org */}
+              <div className="bg-slate-800/50 border border-slate-700/40 rounded-2xl p-4 space-y-3">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2"><Building2 className="h-4 w-4 text-amber-400" /> Create Organisation</h3>
+                <div className="flex gap-2">
+                  <input value={newOrgName} onChange={e => setNewOrgName(e.target.value)} placeholder="Organisation name"
+                    className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-500 text-slate-100 placeholder-slate-600" />
+                  <input value={newOrgDomain} onChange={e => setNewOrgDomain(e.target.value)} placeholder="domain.com (opt)"
+                    className="w-32 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-500 text-slate-100 placeholder-slate-600" />
+                  <button disabled={orgLoading || !newOrgName.trim()} onClick={async () => {
+                    setOrgLoading(true)
+                    try { await adminCreateOrg(newOrgName.trim(), newOrgDomain || null); setNewOrgName(''); setNewOrgDomain(''); await adminListOrgs().then(setAdminOrgs) }
+                    catch (e) { alert(e.message) } finally { setOrgLoading(false) }
+                  }} className="px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-xs font-bold rounded-xl transition-colors">
+                    {orgLoading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Add'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Orgs list */}
+              <div className="space-y-4">
+                {adminOrgs.length === 0 ? (
+                  <p className="text-sm text-slate-500 text-center py-8">No organisations yet.</p>
+                ) : (
+                  adminOrgs.map(org => (
+                    <div key={org.id} className="bg-slate-800/50 border border-slate-700/40 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-bold text-white">{org.name}</p>
+                          <p className="text-xs text-slate-500">{org.domain || 'No domain'} · {org.member_count} member{org.member_count !== 1 ? 's' : ''}</p>
+                        </div>
+                        <button onClick={async () => {
+                          if (!confirm(`Delete organisation "${org.name}"? All members will be unlinked.`)) return
+                          try { await adminDeleteOrg(org.id); setAdminOrgs(p => p.filter(o => o.id !== org.id)) } catch (e) { alert(e.message) }
+                        }} className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Departments */}
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Departments</p>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {org.departments.map(d => (
+                            <span key={d.id} className="flex items-center gap-1.5 text-xs bg-slate-700/60 text-slate-300 px-2.5 py-1 rounded-full border border-slate-600/50">
+                              {d.name}
+                              <button onClick={async () => {
+                                try { await adminDeleteDept(org.id, d.id); setAdminOrgs(p => p.map(o => o.id === org.id ? { ...o, departments: o.departments.filter(x => x.id !== d.id) } : o)) } catch (e) { alert(e.message) }
+                              }} className="text-slate-500 hover:text-red-400 transition-colors"><X className="h-3 w-3" /></button>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input value={newDeptName} onChange={e => setNewDeptName(e.target.value)} placeholder="New department"
+                            className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-amber-500 text-slate-100 placeholder-slate-600" />
+                          <button disabled={!newDeptName.trim()} onClick={async () => {
+                            try {
+                              const d = await adminCreateDept(org.id, newDeptName.trim())
+                              setAdminOrgs(p => p.map(o => o.id === org.id ? { ...o, departments: [...o.departments, d] } : o))
+                              setNewDeptName('')
+                            } catch (e) { alert(e.message) }
+                          }} className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-40 text-white text-xs font-bold rounded-xl transition-colors">Add</button>
+                        </div>
+                      </div>
+
+                      {/* Assign users */}
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Assign Users</p>
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {users.map(u => {
+                            const inThisOrg = u.organisation_id === org.id
+                            return (
+                              <div key={u.id} className="flex items-center gap-2 text-xs">
+                                <div className={`h-6 w-6 rounded-full bg-gradient-to-br ${avatarColor(u.id)} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>{u.name.charAt(0)}</div>
+                                <span className={`flex-1 truncate ${inThisOrg ? 'text-slate-200' : 'text-slate-500'}`}>{u.name}</span>
+                                {inThisOrg && (
+                                  <select defaultValue={u.department_id || ''} onChange={async (e) => {
+                                    const deptId = e.target.value ? parseInt(e.target.value) : null
+                                    try { await adminAssignCorporate(u.id, { organisation_id: org.id, department_id: deptId, manager_id: u.manager_id }); setUsers(p => p.map(x => x.id === u.id ? { ...x, department_id: deptId } : x)) } catch (err) { alert(err.message) }
+                                  }} className="bg-slate-700 border border-slate-600 rounded-lg px-1.5 py-0.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
+                                    <option value="">No dept</option>
+                                    {org.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                  </select>
+                                )}
+                                <button onClick={async () => {
+                                  try {
+                                    if (inThisOrg) { await adminAssignCorporate(u.id, { organisation_id: null, department_id: null, manager_id: null }); setUsers(p => p.map(x => x.id === u.id ? { ...x, organisation_id: null, department_id: null } : x)) }
+                                    else { await adminAssignCorporate(u.id, { organisation_id: org.id }); setUsers(p => p.map(x => x.id === u.id ? { ...x, organisation_id: org.id } : x)) }
+                                  } catch (e) { alert(e.message) }
+                                }} className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors ${inThisOrg ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'}`}>
+                                  {inThisOrg ? 'Remove' : 'Add'}
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -4255,6 +4376,455 @@ function PeopleTab({ users, currentUser, groups = [], globalBalances = [], initi
   )
 }
 
+// ── Work Tab ──────────────────────────────────────────────────────────────────
+function WorkTab({ currentUser }) {
+  const [orgInfo, setOrgInfo]       = useState(null)
+  const [reports, setReports]       = useState([])
+  const [approvals, setApprovals]   = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [activeSection, setSection] = useState('reports') // 'reports' | 'approvals' | 'org'
+  const [showCreateModal, setShowCreate] = useState(false)
+  const [selectedReport, setSelectedReport] = useState(null)
+  const [reviewModal, setReviewModal] = useState(null) // { report, action: 'approve'|'reject' }
+
+  const isManager = orgInfo && orgInfo.direct_reports && orgInfo.direct_reports.length > 0
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [org, reps, apprs] = await Promise.all([
+        fetchMyOrg(),
+        fetchMyReports(),
+        fetchMyApprovals(),
+      ])
+      setOrgInfo(org)
+      setReports(reps)
+      setApprovals(apprs)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { reload() }, [reload])
+
+  const STATUS_META = {
+    draft:       { label: 'Draft',       color: 'text-slate-400 bg-slate-800 border-slate-700' },
+    submitted:   { label: 'Submitted',   color: 'text-blue-300 bg-blue-500/10 border-blue-500/20' },
+    approved:    { label: 'Approved',    color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
+    rejected:    { label: 'Rejected',    color: 'text-red-300 bg-red-500/10 border-red-500/20' },
+    reimbursed:  { label: 'Reimbursed', color: 'text-purple-300 bg-purple-500/10 border-purple-500/20' },
+  }
+
+  const handleSubmit = async (reportId) => {
+    try {
+      await submitReport(reportId)
+      await reload()
+    } catch (e) { alert(e.message) }
+  }
+
+  const handleDelete = async (reportId) => {
+    if (!confirm('Delete this report?')) return
+    try {
+      await deleteReport(reportId)
+      setSelectedReport(null)
+      await reload()
+    } catch (e) { alert(e.message) }
+  }
+
+  const handleReview = async (reportId, action, notes) => {
+    try {
+      if (action === 'approve')    await approveReport(reportId, notes)
+      else if (action === 'reject') await rejectReport(reportId, notes)
+      else if (action === 'reimburse') await reimburseReport(reportId)
+      setReviewModal(null)
+      await reload()
+    } catch (e) { alert(e.message) }
+  }
+
+  if (loading) return (
+    <div className="flex justify-center items-center py-24">
+      <Loader2 className="animate-spin h-6 w-6 text-indigo-400" />
+    </div>
+  )
+
+  if (!orgInfo) return (
+    <div className="flex flex-col items-center justify-center py-24 text-center px-8">
+      <Building2 className="h-14 w-14 text-slate-700 mb-4" />
+      <p className="font-semibold text-slate-300 text-lg">Not in an organisation</p>
+      <p className="text-sm text-slate-500 mt-2">Ask your admin to add you to an organisation to access the Work features.</p>
+    </div>
+  )
+
+  return (
+    <div className="pt-4 pb-4 space-y-4">
+      {/* Org header */}
+      <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-2xl p-4 flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0">
+          <Building2 className="h-5 w-5 text-white" />
+        </div>
+        <div className="min-w-0">
+          <p className="font-bold text-white truncate">{orgInfo.organisation.name}</p>
+          <p className="text-xs text-slate-400 truncate">
+            {orgInfo.department ? orgInfo.department.name : 'No department'}
+            {orgInfo.manager ? ` · Manager: ${orgInfo.manager.name}` : ''}
+          </p>
+        </div>
+        {orgInfo.employee_id && (
+          <span className="ml-auto shrink-0 text-[10px] font-mono text-slate-500 bg-slate-800 px-2 py-1 rounded-lg">{orgInfo.employee_id}</span>
+        )}
+      </div>
+
+      {/* Section tabs */}
+      <div className="flex gap-2">
+        {[
+          { id: 'reports',   label: 'My Reports',  icon: FileText },
+          ...(isManager ? [{ id: 'approvals', label: `Approvals${approvals.length ? ` (${approvals.length})` : ''}`, icon: ClipboardList }] : []),
+          { id: 'org',       label: 'Team',        icon: Users },
+        ].map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              activeSection === s.id
+                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
+            }`}>
+            <s.icon className="h-3.5 w-3.5" />
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* My Reports */}
+      {activeSection === 'reports' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Expense Reports</p>
+            <button onClick={() => setShowCreate(true)}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded-xl transition-colors">
+              <Plus className="h-3.5 w-3.5" /> New Report
+            </button>
+          </div>
+
+          {reports.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 text-center">
+              <FileText className="h-10 w-10 text-slate-700 mb-3" />
+              <p className="text-slate-400 font-medium">No expense reports yet</p>
+              <p className="text-xs text-slate-600 mt-1">Create a report to start tracking work expenses</p>
+            </div>
+          ) : (
+            reports.map(r => {
+              const meta = STATUS_META[r.status] || STATUS_META.draft
+              return (
+                <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                  className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 cursor-pointer hover:border-slate-600/60 transition-all"
+                  onClick={() => setSelectedReport(selectedReport?.id === r.id ? null : r)}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-100 truncate">{r.title}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {r.expenses.length} expense{r.expenses.length !== 1 ? 's' : ''} · {r.currency} {Number(r.total_amount).toFixed(2)}
+                      </p>
+                    </div>
+                    <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>
+                      {meta.label}
+                    </span>
+                  </div>
+
+                  {selectedReport?.id === r.id && (
+                    <div className="mt-3 pt-3 border-t border-slate-700/50 space-y-2">
+                      {r.description && <p className="text-xs text-slate-400">{r.description}</p>}
+                      {r.period_start && (
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          {new Date(r.period_start).toLocaleDateString()} – {r.period_end ? new Date(r.period_end).toLocaleDateString() : '…'}
+                        </p>
+                      )}
+                      {r.review_notes && (
+                        <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+                          Note: {r.review_notes}
+                        </p>
+                      )}
+                      {r.expenses.length > 0 && (
+                        <div className="space-y-1 max-h-40 overflow-y-auto">
+                          {r.expenses.map(e => (
+                            <div key={e.id} className="flex items-center justify-between text-xs py-1 px-2 bg-slate-900/50 rounded-lg">
+                              <span className="text-slate-300 truncate">{e.description}</span>
+                              <span className="text-slate-400 shrink-0 ml-2">{e.currency || r.currency} {Number(e.amount).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        {r.status === 'draft' && (
+                          <button onClick={e => { e.stopPropagation(); handleSubmit(r.id) }}
+                            className="flex-1 py-2 text-xs font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded-xl transition-colors flex items-center justify-center gap-1">
+                            <Send className="h-3 w-3" /> Submit
+                          </button>
+                        )}
+                        {(r.status === 'draft' || r.status === 'rejected') && (
+                          <button onClick={e => { e.stopPropagation(); handleDelete(r.id) }}
+                            className="px-3 py-2 text-xs font-bold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-colors">
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              )
+            })
+          )}
+        </div>
+      )}
+
+      {/* Approvals */}
+      {activeSection === 'approvals' && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Approvals</p>
+          {approvals.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 text-center">
+              <Inbox className="h-10 w-10 text-slate-700 mb-3" />
+              <p className="text-slate-400 font-medium">All clear</p>
+              <p className="text-xs text-slate-600 mt-1">No reports waiting for your approval</p>
+            </div>
+          ) : (
+            approvals.map(r => (
+              <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                className="bg-slate-800/60 border border-blue-500/20 rounded-2xl p-4">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div>
+                    <p className="font-semibold text-slate-100">{r.title}</p>
+                    <p className="text-xs text-slate-500">By {r.submitted_by_name} · {r.currency} {Number(r.total_amount).toFixed(2)}</p>
+                  </div>
+                  <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border text-blue-300 bg-blue-500/10 border-blue-500/20">Submitted</span>
+                </div>
+                {r.description && <p className="text-xs text-slate-400 mb-2">{r.description}</p>}
+                {r.expenses.length > 0 && (
+                  <div className="space-y-1 mb-3 max-h-36 overflow-y-auto">
+                    {r.expenses.map(e => (
+                      <div key={e.id} className="flex justify-between text-xs px-2 py-1 bg-slate-900/50 rounded-lg">
+                        <span className="text-slate-300 truncate">{e.description}</span>
+                        <span className="text-slate-400 shrink-0 ml-2">{e.currency || r.currency} {Number(e.amount).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={() => setReviewModal({ report: r, action: 'approve' })}
+                    className="flex-1 py-2 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl transition-colors">
+                    Approve
+                  </button>
+                  <button onClick={() => setReviewModal({ report: r, action: 'reject' })}
+                    className="flex-1 py-2 text-xs font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors">
+                    Reject
+                  </button>
+                </div>
+                {r.status === 'approved' && (
+                  <button onClick={() => handleReview(r.id, 'reimburse')}
+                    className="w-full mt-2 py-2 text-xs font-bold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-colors">
+                    Mark Reimbursed
+                  </button>
+                )}
+              </motion.div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Team / Org info */}
+      {activeSection === 'org' && (
+        <div className="space-y-3">
+          {orgInfo.manager && (
+            <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Your Manager</p>
+              <div className="flex items-center gap-3">
+                <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(orgInfo.manager.id)} flex items-center justify-center text-sm font-bold text-white`}>
+                  {orgInfo.manager.name.charAt(0)}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{orgInfo.manager.name}</p>
+                  <p className="text-xs text-slate-500">{orgInfo.manager.email}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {orgInfo.direct_reports && orgInfo.direct_reports.length > 0 && (
+            <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Direct Reports</p>
+              <div className="space-y-2">
+                {orgInfo.direct_reports.map(r => (
+                  <div key={r.id} className="flex items-center gap-3">
+                    <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(r.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                      {r.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-200">{r.name}</p>
+                      <p className="text-[11px] text-slate-500">{r.email}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              Teammates ({orgInfo.teammates.length})
+            </p>
+            {orgInfo.teammates.length === 0 ? (
+              <p className="text-xs text-slate-600">No other members yet</p>
+            ) : (
+              <div className="space-y-2">
+                {orgInfo.teammates.map(t => (
+                  <div key={t.id} className="flex items-center gap-3">
+                    <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(t.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                      {t.name.charAt(0)}
+                    </div>
+                    <p className="text-sm text-slate-300">{t.name}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Create Report Modal */}
+      <AnimatePresence>
+        {showCreateModal && (
+          <CreateReportModal
+            onClose={() => setShowCreate(false)}
+            onCreated={async () => { setShowCreate(false); await reload() }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Review Modal */}
+      <AnimatePresence>
+        {reviewModal && (
+          <ReviewModal
+            report={reviewModal.report}
+            action={reviewModal.action}
+            onClose={() => setReviewModal(null)}
+            onSubmit={(notes) => handleReview(reviewModal.report.id, reviewModal.action, notes)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function CreateReportModal({ onClose, onCreated }) {
+  const [title, setTitle]       = useState('')
+  const [desc, setDesc]         = useState('')
+  const [currency, setCurrency] = useState('GBP')
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState('')
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!title.trim()) { setError('Title is required'); return }
+    setLoading(true); setError('')
+    try {
+      await createReport({ title: title.trim(), description: desc || null, currency })
+      onCreated()
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }}
+        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
+          <h3 className="font-bold text-white flex items-center gap-2">
+            <FileText className="h-4 w-4 text-indigo-400" /> New Expense Report
+          </h3>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Title</label>
+            <input type="text" required value={title} onChange={e => setTitle(e.target.value)} autoFocus
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
+              placeholder="e.g. London Trip – June 2026" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Description (optional)</label>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2}
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 resize-none"
+              placeholder="What was this for?" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Currency</label>
+            <div className="flex gap-2">
+              {['GBP', 'USD', 'EUR', 'INR'].map(c => (
+                <button type="button" key={c} onClick={() => setCurrency(c)}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl border transition-all ${currency === c ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' : 'bg-slate-900/50 text-slate-500 border-slate-700 hover:text-slate-300'}`}>
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <button type="submit" disabled={loading}
+            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex justify-center items-center">
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : 'Create Report'}
+          </button>
+        </form>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function ReviewModal({ report, action, onClose, onSubmit }) {
+  const [notes, setNotes] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    try { await onSubmit(notes || null) }
+    finally { setLoading(false) }
+  }
+
+  const isApprove = action === 'approve'
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
+        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
+          <h3 className={`font-bold ${isApprove ? 'text-emerald-300' : 'text-red-300'}`}>
+            {isApprove ? 'Approve Report' : 'Reject Report'}
+          </h3>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <p className="text-sm text-slate-300">
+            {isApprove ? 'Approve' : 'Reject'} <span className="font-semibold text-white">"{report.title}"</span> by {report.submitted_by_name}?
+          </p>
+          <div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Notes (optional)</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} autoFocus
+              className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500 resize-none"
+              placeholder={isApprove ? 'Any comments for the employee…' : 'Reason for rejection…'} />
+          </div>
+          <button type="submit" disabled={loading}
+            className={`w-full py-3 font-bold rounded-xl transition-colors flex justify-center items-center text-white ${isApprove ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600'} disabled:opacity-50`}>
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : (isApprove ? 'Approve' : 'Reject')}
+          </button>
+        </form>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ── Balance Breakdown Modal ───────────────────────────────────────────────────
 function BalanceBreakdownModal({ balanceObj, onClose, onSettleGlobal }) {
   return (
@@ -5157,13 +5727,19 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
         </div>
 
         {/* Build version */}
-        <div className="px-6 pb-5 flex items-center justify-center gap-1.5">
-          <span className="text-[10px] text-slate-600 font-mono select-all"
-            title={`Built ${__GIT_DATE__}`}>
-            v{__GIT_HASH__}
+        <div className="px-6 pb-5 flex items-center justify-center">
+          <span className="text-[11px] font-mono text-slate-500 select-all tracking-wide">
+            {(() => {
+              try {
+                const d = new Date(__GIT_DATE__)
+                const day = d.toLocaleDateString(undefined, { day: '2-digit' })
+                const mon = d.toLocaleDateString(undefined, { month: 'short' })
+                const yr  = d.toLocaleDateString(undefined, { year: 'numeric' })
+                const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase()
+                return `v${__GIT_HASH__} · ${day}-${mon}-${yr} ${time}`
+              } catch { return `v${__GIT_HASH__}` }
+            })()}
           </span>
-          <span className="text-[10px] text-slate-700">·</span>
-          <span className="text-[10px] text-slate-600">{__GIT_DATE__}</span>
         </div>
       </motion.div>
     </motion.div>

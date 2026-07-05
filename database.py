@@ -48,20 +48,50 @@ group_members = Table(
     Column("is_active", Boolean, default=True),
 )
 
+class Organisation(Base):
+    __tablename__ = "organisations"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String, nullable=False, index=True)
+    domain     = Column(String, nullable=True)   # e.g. "acme.com" — optional
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    departments = relationship("Department", back_populates="organisation", cascade="all, delete-orphan")
+
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    name            = Column(String, nullable=False)
+    organisation_id = Column(Integer, ForeignKey("organisations.id", ondelete="CASCADE"), index=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    organisation = relationship("Organisation", back_populates="departments")
+
+
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    email = Column(String, unique=True, index=True)
-    password = Column(String)
-    is_admin = Column(Boolean, default=False)
-    is_verified = Column(Boolean, default=False)
+    id              = Column(Integer, primary_key=True, index=True)
+    name            = Column(String, index=True)
+    email           = Column(String, unique=True, index=True)
+    password        = Column(String)
+    is_admin        = Column(Boolean, default=False)
+    is_verified     = Column(Boolean, default=False)
+    # ── Corporate fields (nullable — personal users stay null) ──
+    organisation_id = Column(Integer, ForeignKey("organisations.id"), nullable=True, index=True)
+    department_id   = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    manager_id      = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    employee_id     = Column(String, nullable=True)
 
-    groups = relationship("Group", secondary=group_members, back_populates="members")
+    groups        = relationship("Group", secondary=group_members, back_populates="members")
     expenses_paid = relationship("Expense", foreign_keys="[Expense.payer_id]", back_populates="payer")
     expenses_created = relationship("Expense", foreign_keys="[Expense.created_by_id]", back_populates="created_by")
-    splits = relationship("ExpenseSplit", back_populates="user")
+    splits        = relationship("ExpenseSplit", back_populates="user")
+    organisation  = relationship("Organisation", foreign_keys=[organisation_id])
+    department    = relationship("Department", foreign_keys=[department_id])
+    manager       = relationship("User", foreign_keys=[manager_id], remote_side="User.id")
 
 class Group(Base):
     __tablename__ = "groups"
@@ -87,15 +117,19 @@ class Expense(Base):
     status = Column(String, default="active", index=True) # active, pending_deletion
     receipt_image = Column(Text, nullable=True)
     category = Column(String(50), nullable=True)
-    recurrence = Column(String(10), nullable=True)   # null | 'weekly' | 'monthly' | 'yearly'
-    next_due = Column(DateTime, nullable=True)        # when the next copy should be created
+    recurrence = Column(String(10), nullable=True)
+    next_due = Column(DateTime, nullable=True)
+    # ── Corporate fields ──
+    currency  = Column(String(10), nullable=True, default="GBP")
+    report_id = Column(Integer, ForeignKey("expense_reports.id"), nullable=True, index=True)
 
-    group = relationship("Group", back_populates="expenses")
-    payer = relationship("User", foreign_keys=[payer_id], back_populates="expenses_paid")
+    group      = relationship("Group", back_populates="expenses")
+    payer      = relationship("User", foreign_keys=[payer_id], back_populates="expenses_paid")
     created_by = relationship("User", foreign_keys=[created_by_id])
-    splits = relationship("ExpenseSplit", back_populates="expense", cascade="all, delete-orphan")
-    approvals = relationship("ExpenseDeletionApproval", back_populates="expense", cascade="all, delete-orphan")
-    messages = relationship("ExpenseMessage", back_populates="expense", cascade="all, delete-orphan", order_by="ExpenseMessage.created_at")
+    splits     = relationship("ExpenseSplit", back_populates="expense", cascade="all, delete-orphan")
+    approvals  = relationship("ExpenseDeletionApproval", back_populates="expense", cascade="all, delete-orphan")
+    messages   = relationship("ExpenseMessage", back_populates="expense", cascade="all, delete-orphan", order_by="ExpenseMessage.created_at")
+    report     = relationship("ExpenseReport", back_populates="expenses", foreign_keys=[report_id])
 
 class ExpenseSplit(Base):
     __tablename__ = "expense_splits"
@@ -232,6 +266,36 @@ class GroupBudget(Base):
 
     group      = relationship("Group")
     created_by = relationship("User")
+
+
+class ExpenseReport(Base):
+    __tablename__ = "expense_reports"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    title           = Column(String, nullable=False)
+    description     = Column(Text, nullable=True)
+    submitted_by_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    organisation_id = Column(Integer, ForeignKey("organisations.id", ondelete="CASCADE"), index=True)
+    department_id   = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    manager_id      = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    # draft | submitted | approved | rejected | reimbursed
+    status          = Column(String, default="draft", index=True)
+    currency        = Column(String(10), default="GBP")
+    total_amount    = Column(Numeric(10, 2), default=0)
+    period_start    = Column(DateTime, nullable=True)
+    period_end      = Column(DateTime, nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    updated_at      = Column(DateTime, default=datetime.utcnow)
+    reviewed_by_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at     = Column(DateTime, nullable=True)
+    review_notes    = Column(Text, nullable=True)
+
+    submitted_by = relationship("User", foreign_keys=[submitted_by_id])
+    organisation = relationship("Organisation")
+    department   = relationship("Department")
+    manager      = relationship("User", foreign_keys=[manager_id])
+    reviewed_by  = relationship("User", foreign_keys=[reviewed_by_id])
+    expenses     = relationship("Expense", back_populates="report", foreign_keys="[Expense.report_id]")
 
 
 # Create tables

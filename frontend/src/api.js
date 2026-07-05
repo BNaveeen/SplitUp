@@ -365,6 +365,34 @@ export const adminGetFeatureFlags    = () => apiFetch('/admin/feature-flags').ca
 export const adminUpdateFeatureFlag  = (plan, featureKey, enabled, limitValue = null) =>
   apiFetch(`/admin/feature-flags/${plan}/${featureKey}`, { method: 'PUT', body: JSON.stringify({ enabled, limit_value: limitValue }) })
 
+// ── Corporate: Admin ──────────────────────────────────────────────────────────
+
+export const adminListOrgs        = () => apiFetch('/admin/organisations').catch(() => [])
+export const adminCreateOrg       = (name, domain) => apiFetch('/admin/organisations', { method: 'POST', body: JSON.stringify({ name, domain }) })
+export const adminDeleteOrg       = (orgId) => apiFetch(`/admin/organisations/${orgId}`, { method: 'DELETE' })
+export const adminCreateDept      = (orgId, name) => apiFetch(`/admin/organisations/${orgId}/departments`, { method: 'POST', body: JSON.stringify({ name }) })
+export const adminDeleteDept      = (orgId, deptId) => apiFetch(`/admin/organisations/${orgId}/departments/${deptId}`, { method: 'DELETE' })
+export const adminAssignCorporate = (userId, data) => apiFetch(`/admin/users/${userId}/corporate`, { method: 'PUT', body: JSON.stringify(data) })
+
+// ── Corporate: My Org ─────────────────────────────────────────────────────────
+
+export const fetchMyOrg       = () => apiFetch('/my/org').catch(() => null)
+export const fetchMyReports   = () => apiFetch('/my/reports').catch(() => [])
+export const createReport     = (data) => apiFetch('/my/reports', { method: 'POST', body: JSON.stringify(data) })
+export const getReport        = (id) => apiFetch(`/my/reports/${id}`)
+export const updateReport     = (id, data) => apiFetch(`/my/reports/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteReport     = (id) => apiFetch(`/my/reports/${id}`, { method: 'DELETE' })
+export const submitReport     = (id) => apiFetch(`/my/reports/${id}/submit`, { method: 'POST' })
+export const addExpenseToReport    = (reportId, expenseId) => apiFetch(`/my/reports/${reportId}/expenses/${expenseId}`, { method: 'POST' })
+export const removeExpenseFromReport = (reportId, expenseId) => apiFetch(`/my/reports/${reportId}/expenses/${expenseId}`, { method: 'DELETE' })
+
+// ── Corporate: Approvals ──────────────────────────────────────────────────────
+
+export const fetchMyApprovals  = () => apiFetch('/my/approvals').catch(() => [])
+export const approveReport     = (id, notes) => apiFetch(`/my/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify({ notes }) })
+export const rejectReport      = (id, notes) => apiFetch(`/my/approvals/${id}/reject`,  { method: 'POST', body: JSON.stringify({ notes }) })
+export const reimburseReport   = (id) => apiFetch(`/my/approvals/${id}/reimburse`, { method: 'POST' })
+
 export const fetchHealth = () => {
   const k    = _pool ? _pool.pick() : -1
   const base = _pool ? _pool.url(k) : API_URL

@@ -13,6 +13,7 @@ from database import SessionLocal, Expense, ExpenseSplit, ExpenseMessage, Settle
 from routes.deps import limiter, get_db
 from routes import auth, users, groups, expenses, settlements, admin, invites, websocket_routes
 from routes import subscriptions as subscriptions_router
+from routes import corporate as corporate_router
 from services.realtime import manager, set_event_loop
 from services.helpers import _add_system_message, _push_group_event
 
@@ -54,6 +55,7 @@ app.include_router(admin.router)
 app.include_router(invites.router)
 app.include_router(websocket_routes.router)
 app.include_router(subscriptions_router.router)
+app.include_router(corporate_router.router)
 
 
 @app.get("/health")
@@ -172,6 +174,14 @@ async def startup_event():
         "ALTER TABLE expenses ADD COLUMN category TEXT",
         "ALTER TABLE expenses ADD COLUMN recurrence TEXT",
         f"ALTER TABLE expenses ADD COLUMN next_due {ts_type}",
+        # Corporate columns for users
+        "ALTER TABLE users ADD COLUMN organisation_id INTEGER",
+        "ALTER TABLE users ADD COLUMN department_id INTEGER",
+        "ALTER TABLE users ADD COLUMN manager_id INTEGER",
+        "ALTER TABLE users ADD COLUMN employee_id TEXT",
+        # Corporate columns for expenses
+        "ALTER TABLE expenses ADD COLUMN currency TEXT DEFAULT 'GBP'",
+        "ALTER TABLE expenses ADD COLUMN report_id INTEGER",
     ]:
         mig_db = SessionLocal()
         try:
