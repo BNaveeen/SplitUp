@@ -2797,7 +2797,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                 <div className="flex items-start justify-between gap-4 p-4 bg-slate-900/50 rounded-xl border border-rose-500/20">
                   <div>
                     <p className="text-sm font-semibold text-slate-200">Wipe All Transactions</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Delete all expenses, splits, settlements, and notifications. Users and groups remain intact.</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Delete all expenses, splits, settlements, notifications, and expense reports. Users and groups remain intact.</p>
                   </div>
                   <button onClick={() => { setShowWipeDialog(true); setWipeInput(''); setWipeError('') }}
                     className="shrink-0 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-bold transition-colors">
@@ -2822,7 +2822,7 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
                           <p className="text-xs text-slate-400">This cannot be undone</p>
                         </div>
                       </div>
-                      <p className="text-sm text-slate-300">This will permanently delete all <span className="text-rose-400 font-semibold">expenses, splits, settlements, messages, and notifications</span>. Users and groups will NOT be affected.</p>
+                      <p className="text-sm text-slate-300">This will permanently delete all <span className="text-rose-400 font-semibold">expenses, splits, settlements, messages, notifications, and expense reports</span>. Users and groups will NOT be affected.</p>
                       <div>
                         <p className="text-xs text-slate-400 mb-1.5">Type <span className="font-mono text-rose-400 font-bold">DELETE ALL TRANSACTIONS</span> to confirm:</p>
                         <input autoFocus value={wipeInput} onChange={e => setWipeInput(e.target.value)}

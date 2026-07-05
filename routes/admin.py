@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from database import User, Group, Expense, ExpenseSplit, ExpenseMessage, ExpenseDeletionApproval, Notification, Settlement
+from database import User, Group, Expense, ExpenseSplit, ExpenseMessage, ExpenseDeletionApproval, Notification, Settlement, ExpenseReport
 from routes.deps import get_db, get_current_user_id, hash_password
 from services.helpers import _format_expense, _EXPENSE_LOAD_OPTIONS
 from services.cache import invalidate_all_balances
@@ -191,13 +191,14 @@ def admin_wipe_transactions(
     _require_admin(current_user_id, db)
     if req.confirm != "DELETE ALL TRANSACTIONS":
         raise HTTPException(status_code=400, detail="Confirmation phrase does not match")
-    # Delete in dependency order: splits → approvals → messages → settlements → notifications → expenses
+    # Delete in dependency order
     db.query(ExpenseSplit).delete(synchronize_session=False)
     db.query(ExpenseDeletionApproval).delete(synchronize_session=False)
     db.query(ExpenseMessage).delete(synchronize_session=False)
     db.query(Settlement).delete(synchronize_session=False)
     db.query(Notification).delete(synchronize_session=False)
     db.query(Expense).delete(synchronize_session=False)
+    db.query(ExpenseReport).delete(synchronize_session=False)
     db.commit()
     invalidate_all_balances()
     return {"message": "All transactions wiped. Users and groups are intact."}
