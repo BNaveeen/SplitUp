@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import User, Organisation, Department, ExpenseReport, Expense
-from routes.deps import get_db, get_current_user_id
-from passlib.context import CryptContext
+from routes.deps import get_db, get_current_user_id, hash_password
 from schemas import (
     OrgCreate, OrgResponse, DeptCreate, DeptResponse,
     AssignCorporateRequest, ReportCreate, ReportUpdate,
@@ -13,8 +12,6 @@ from schemas import (
     OrgMemberUpdate, OrgAddMemberRequest, OrgCreateMemberRequest,
     WorkExpenseItem,
 )
-
-_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 router = APIRouter()
 
@@ -353,7 +350,7 @@ def org_create_member(
     user = User(
         name            = body.name.strip(),
         email           = body.email.lower().strip(),
-        password        = _pwd.hash(body.password),
+        password        = hash_password(body.password),
         is_verified     = True,
         organisation_id = admin.organisation_id,
         department_id   = body.department_id,
