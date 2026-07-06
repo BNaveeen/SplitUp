@@ -1,6 +1,3 @@
-import os
-import re
-import base64
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,8 +14,6 @@ from schemas import (
     WorkExpenseItem,
 )
 
-class InvoiceImageRequest(BaseModel):
-    image: str   # data URL: "data:image/jpeg;base64,..."
 
 router = APIRouter()
 
@@ -447,59 +442,6 @@ def org_delete_department(
     db.query(User).filter(User.department_id == dept_id).update({"department_id": None}, synchronize_session=False)
     db.delete(dept); db.commit()
     return {"message": "Department deleted"}
-
-
-# ── Invoice amount extraction ─────────────────────────────────────────────────
-
-@router.post("/my/reports/extract-amount")
-def extract_invoice_amount(
-    body: InvoiceImageRequest,
-    uid: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-):
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Invoice extraction not configured")
-
-    # Parse data URL
-    match = re.match(r"data:([^;]+);base64,(.+)", body.image, re.DOTALL)
-    if not match:
-        raise HTTPException(status_code=400, detail="Invalid image data")
-    media_type, b64_data = match.group(1), match.group(2)
-    if media_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
-        raise HTTPException(status_code=400, detail="Unsupported image type")
-
-    try:
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=128,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": b64_data},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Look at this invoice or receipt. "
-                            "Reply with ONLY the final total amount as a number (digits and decimal point only, no currency symbols or commas). "
-                            "If you cannot determine the total amount, reply with exactly: null"
-                        ),
-                    },
-                ],
-            }],
-        )
-        raw = msg.content[0].text.strip()
-        if raw.lower() == "null":
-            return {"amount": None}
-        amount = float(re.sub(r"[^\d.]", "", raw))
-        return {"amount": round(amount, 2)}
-    except Exception as exc:
-        return {"amount": None, "error": str(exc)}
 
 
 # ── My Organisation info ──────────────────────────────────────────────────────

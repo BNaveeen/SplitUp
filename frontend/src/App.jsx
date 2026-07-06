@@ -28,7 +28,7 @@ import {
   orgListMembers, orgStats, orgAllReports, orgAddMember, orgCreateMember, orgUpdateMember, orgRemoveMember,
   orgCreateDept, orgDeleteDept, orgApproveReport, orgRejectReport, orgReimburseReport,
   fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
-  addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem, extractInvoiceAmount,
+  addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem,
   fetchMyApprovals, approveReport, rejectReport, reimburseReport,
 } from './api'
 
@@ -5847,6 +5847,36 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
   )
 }
 
+// Parse the grand total from OCR'd invoice/receipt text
+function _parseInvoiceTotal(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+
+  // Ordered from most to least specific
+  const keywords = [
+    /grand\s*total|total\s*due|amount\s*due|balance\s*due|total\s*payable|amount\s*payable|net\s*total/i,
+    /\btotal\b/i,
+    /\bamount\b/i,
+  ]
+
+  const extractNums = (line) =>
+    [...line.matchAll(/\d[\d,]*\.\d{2}/g)]
+      .map(m => parseFloat(m[0].replace(/,/g, '')))
+      .filter(n => n > 0 && n < 1_000_000)
+
+  for (const kw of keywords) {
+    for (const line of lines) {
+      if (kw.test(line)) {
+        const nums = extractNums(line)
+        if (nums.length) return Math.max(...nums)
+      }
+    }
+  }
+
+  // Fallback: largest decimal amount in the whole text
+  const all = extractNums(text)
+  return all.length ? Math.max(...all) : null
+}
+
 function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSaved = null }) {
   const isEditing = !!item
   const [desc, setDesc]               = useState(item?.description || '')
@@ -5878,15 +5908,15 @@ function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSav
       setReceipt(dataUrl)
       setDetecting(true); setDetected(false)
       try {
-        const res = await extractInvoiceAmount(dataUrl)
-        if (res.amount != null) {
-          const detected = String(res.amount)
-          setAmount(detected)
-          setVerify(detected)
-          setDetected(true)
+        const { recognize } = await import('tesseract.js')
+        const { data: { text } } = await recognize(dataUrl, 'eng', { logger: () => {} })
+        const found = _parseInvoiceTotal(text)
+        if (found != null) {
+          const str = String(found)
+          setAmount(str); setVerify(str); setDetected(true)
         }
       } catch (_) {
-        // extraction failed silently — user fills manually
+        // OCR failed silently — user fills manually
       } finally {
         setDetecting(false)
       }
