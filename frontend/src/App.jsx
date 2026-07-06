@@ -5155,9 +5155,10 @@ function WorkTab({ currentUser }) {
   const [approvals, setApprovals]   = useState([])
   const [loading, setLoading]       = useState(true)
   const [activeSection, setSection] = useState('reports') // 'reports' | 'approvals' | 'org'
-  const [showCreateModal, setShowCreate] = useState(false)
-  const [openReport, setOpenReport]     = useState(null) // report object to show in detail modal
-  const [reviewModal, setReviewModal] = useState(null) // { report, action: 'approve'|'reject' }
+  const [showCreateModal, setShowCreate]   = useState(false)
+  const [openReport, setOpenReport]        = useState(null)
+  const [openApproval, setOpenApproval]    = useState(null) // report open in full approval review
+  const [reviewModal, setReviewModal]      = useState(null)
 
   const isManager = orgInfo && orgInfo.direct_reports && orgInfo.direct_reports.length > 0
 
@@ -5346,40 +5347,29 @@ function WorkTab({ currentUser }) {
           ) : (
             approvals.map(r => (
               <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-                className="bg-slate-800/60 border border-blue-500/20 rounded-2xl p-4">
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div>
-                    <p className="font-semibold text-slate-100">{r.title}</p>
-                    <p className="text-xs text-slate-500">By {r.submitted_by_name} · {r.currency} {Number(r.total_amount).toFixed(2)}</p>
+                onClick={() => setOpenApproval(r)}
+                className="bg-slate-800/60 border border-blue-500/20 rounded-2xl p-4 cursor-pointer hover:border-blue-500/40 hover:bg-slate-800/80 transition-all active:scale-[0.99]">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-slate-100 truncate">{r.title}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {r.submitted_by_name} · {r.expenses.length} item{r.expenses.length !== 1 ? 's' : ''} · {r.currency} {Number(r.total_amount).toFixed(2)}
+                    </p>
                   </div>
-                  <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border text-blue-300 bg-blue-500/10 border-blue-500/20">Submitted</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-blue-300 bg-blue-500/10 border-blue-500/20">Submitted</span>
+                    <ChevronRight className="h-4 w-4 text-slate-500" />
+                  </div>
                 </div>
-                {r.description && <p className="text-xs text-slate-400 mb-2">{r.description}</p>}
-                {r.expenses.length > 0 && (
-                  <div className="space-y-1 mb-3 max-h-36 overflow-y-auto">
-                    {r.expenses.map(e => (
-                      <div key={e.id} className="flex justify-between text-xs px-2 py-1 bg-slate-900/50 rounded-lg">
-                        <span className="text-slate-300 truncate">{e.description}</span>
-                        <span className="text-slate-400 shrink-0 ml-2">{e.currency || r.currency} {Number(e.amount).toFixed(2)}</span>
-                      </div>
+                {/* Receipt thumbnails preview */}
+                {r.expenses.some(e => e.receipt_image) && (
+                  <div className="flex gap-1.5 mt-3 overflow-x-auto pb-0.5">
+                    {r.expenses.filter(e => e.receipt_image).map(e => (
+                      <img key={e.id} src={e.receipt_image} alt="receipt"
+                        className="h-12 w-12 shrink-0 object-cover rounded-lg border border-slate-700/50" />
                     ))}
+                    <div className="h-12 flex items-center px-2 text-xs text-slate-500">tap to review</div>
                   </div>
-                )}
-                <div className="flex gap-2">
-                  <button onClick={() => setReviewModal({ report: r, action: 'approve' })}
-                    className="flex-1 py-2 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl transition-colors">
-                    Approve
-                  </button>
-                  <button onClick={() => setReviewModal({ report: r, action: 'reject' })}
-                    className="flex-1 py-2 text-xs font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors">
-                    Reject
-                  </button>
-                </div>
-                {r.status === 'approved' && (
-                  <button onClick={() => handleReview(r.id, 'reimburse')}
-                    className="w-full mt-2 py-2 text-xs font-bold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-colors">
-                    Mark Reimbursed
-                  </button>
                 )}
               </motion.div>
             ))
@@ -5471,7 +5461,20 @@ function WorkTab({ currentUser }) {
         )}
       </AnimatePresence>
 
-      {/* Review Modal */}
+      {/* Approval Review Modal */}
+      <AnimatePresence>
+        {openApproval && (
+          <ApprovalReviewModal
+            report={openApproval}
+            onClose={() => setOpenApproval(null)}
+            onApprove={async (notes) => { await handleReview(openApproval.id, 'approve', notes); setOpenApproval(null) }}
+            onReject={async (notes)  => { await handleReview(openApproval.id, 'reject',  notes); setOpenApproval(null) }}
+            onReimburse={async ()    => { await handleReview(openApproval.id, 'reimburse'); setOpenApproval(null) }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Review Modal (legacy — kept for any direct calls) */}
       <AnimatePresence>
         {reviewModal && (
           <ReviewModal
@@ -6074,6 +6077,166 @@ function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSav
           </button>
         </form>
       </motion.div>
+    </motion.div>
+  )
+}
+
+// ── Approval Review Modal ─────────────────────────────────────────────────────
+function ApprovalReviewModal({ report, onClose, onApprove, onReject, onReimburse }) {
+  const [notes, setNotes]           = useState('')
+  const [activeItem, setActiveItem] = useState(null)  // expense being zoomed
+  const [loading, setLoading]       = useState(false)
+  const [action, setAction]         = useState(null)  // 'approve' | 'reject'
+  const catMap = Object.fromEntries(WORK_CATEGORIES.map(c => [c.id, c]))
+
+  const confirm = async (act) => {
+    setLoading(true)
+    try {
+      if (act === 'approve')    await onApprove(notes || null)
+      else if (act === 'reject') await onReject(notes || null)
+      else if (act === 'reimburse') await onReimburse()
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex flex-col bg-slate-900">
+
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-4 border-b border-slate-800 shrink-0">
+        <button onClick={onClose} className="p-2 -ml-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors">
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h2 className="font-bold text-white text-base truncate">{report.title}</h2>
+          <p className="text-xs text-slate-500">Submitted by {report.submitted_by_name}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-lg font-black text-white">{report.currency} {Number(report.total_amount).toFixed(2)}</p>
+          <p className="text-[10px] text-slate-500">{report.expenses.length} item{report.expenses.length !== 1 ? 's' : ''}</p>
+        </div>
+      </div>
+
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-52">
+
+        {/* Report meta */}
+        {(report.description || report.period_start) && (
+          <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl px-4 py-3 space-y-1">
+            {report.description && <p className="text-sm text-slate-300">{report.description}</p>}
+            {report.period_start && (
+              <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                <Calendar className="h-3 w-3" />
+                {new Date(report.period_start).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })}
+                {report.period_end && <> – {new Date(report.period_end).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })}</>}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Expense items — each with full invoice */}
+        <div className="space-y-4">
+          {report.expenses.map((e, idx) => {
+            const cat = catMap[e.category] || catMap['other']
+            return (
+              <div key={e.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl overflow-hidden">
+                {/* Item header */}
+                <div className="flex items-start gap-3 p-4 border-b border-slate-700/30">
+                  <span className="text-xl shrink-0 mt-0.5">{cat?.icon || '📦'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-100">{e.description}</p>
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                      <span className="text-xs text-slate-500">{cat?.label || 'Other'}</span>
+                      {e.date && <span className="text-xs text-slate-500">{new Date(e.date).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })}</span>}
+                      <span className="text-xs text-slate-400">{e.currency || report.currency} <span className="font-bold text-slate-200">{Number(e.amount).toFixed(2)}</span></span>
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-[10px] text-slate-600 font-mono">#{idx + 1}</span>
+                </div>
+
+                {/* Invoice image — full width, tap to zoom */}
+                {e.receipt_image ? (
+                  <div>
+                    <div className="px-4 pt-3 pb-1 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                        <Receipt className="h-3 w-3" /> Invoice / Receipt
+                      </span>
+                      <button type="button" onClick={() => setActiveItem(activeItem === e.id ? null : e.id)}
+                        className="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold transition-colors">
+                        {activeItem === e.id ? 'Collapse' : 'Full view'}
+                      </button>
+                    </div>
+                    <motion.div layout className={`px-4 pb-4 ${activeItem === e.id ? '' : 'max-h-64 overflow-hidden'}`}>
+                      <img src={e.receipt_image} alt="invoice"
+                        onClick={() => setActiveItem(activeItem === e.id ? null : e.id)}
+                        className={`w-full rounded-xl border border-slate-700/50 cursor-pointer transition-all ${
+                          activeItem === e.id ? 'object-contain' : 'object-cover h-56'
+                        }`} />
+                    </motion.div>
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 flex items-center gap-2 text-xs text-rose-400/70">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    No invoice uploaded for this item
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Footer — decision area */}
+      <div className="absolute bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 px-4 py-4 space-y-3">
+        {!action ? (
+          <>
+            <p className="text-xs text-slate-500 text-center">Review all items above before deciding</p>
+            <div className="flex gap-3">
+              <button onClick={() => setAction('reject')}
+                className="flex-1 py-3 rounded-2xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 font-bold text-sm transition-colors">
+                Reject
+              </button>
+              <button onClick={() => setAction('approve')}
+                className="flex-1 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm transition-colors">
+                Approve
+              </button>
+            </div>
+            {report.status === 'approved' && (
+              <button onClick={() => confirm('reimburse')} disabled={loading}
+                className="w-full py-2.5 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-300 text-sm font-bold hover:bg-purple-500/20 transition-colors">
+                Mark Reimbursed
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${action === 'approve' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+              {action === 'approve'
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                : <X className="h-4 w-4 text-red-400 shrink-0" />
+              }
+              <p className={`text-xs font-semibold ${action === 'approve' ? 'text-emerald-300' : 'text-red-300'}`}>
+                {action === 'approve' ? 'Approving' : 'Rejecting'} — add a note (optional)
+              </p>
+            </div>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+              placeholder={action === 'approve' ? 'Approval note (optional)…' : 'Reason for rejection…'}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none" />
+            <div className="flex gap-3">
+              <button onClick={() => setAction(null)}
+                className="flex-1 py-2.5 rounded-2xl border border-slate-700 text-slate-400 text-sm font-semibold hover:text-white transition-colors">
+                Back
+              </button>
+              <button onClick={() => confirm(action)} disabled={loading}
+                className={`flex-1 py-2.5 rounded-2xl text-white font-bold text-sm disabled:opacity-50 transition-colors flex justify-center items-center gap-2 ${
+                  action === 'approve' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600'
+                }`}>
+                {loading ? <Loader2 className="animate-spin h-4 w-4" /> : action === 'approve' ? 'Confirm Approve' : 'Confirm Reject'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </motion.div>
   )
 }
