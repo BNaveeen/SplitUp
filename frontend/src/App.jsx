@@ -8,7 +8,7 @@ import {
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
   KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText,
   Moon, Sun, Briefcase, Building2, ClipboardList, ChevronDown, AlertCircle, Clock, Inbox,
-  LayoutDashboard
+  LayoutDashboard, Pencil, Lock, AlertTriangle
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -28,7 +28,7 @@ import {
   orgListMembers, orgStats, orgAllReports, orgAddMember, orgCreateMember, orgUpdateMember, orgRemoveMember,
   orgCreateDept, orgDeleteDept, orgApproveReport, orgRejectReport, orgReimburseReport,
   fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
-  addExpenseToReport, removeExpenseFromReport, addReportItem, deleteReportItem,
+  addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem,
   fetchMyApprovals, approveReport, rejectReport, reimburseReport,
 } from './api'
 
@@ -5585,14 +5585,19 @@ const WORK_CATEGORIES = [
 ]
 
 function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
-  const [report, setReport]             = useState(initialReport)
-  const [showAddItem, setShowAddItem]   = useState(false)
+  const [report, setReport]               = useState(initialReport)
+  const [showAddItem, setShowAddItem]     = useState(false)
+  const [editingItem, setEditingItem]     = useState(null)  // expense object being edited
   const [submitLoading, setSubmitLoading] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
-  const [actionError, setActionError]   = useState('')
+  const [actionError, setActionError]     = useState('')
 
-  const isDraft    = report.status === 'draft'
+  const isDraft      = report.status === 'draft'
+  const isRejected   = report.status === 'rejected'
+  const isEditable   = isDraft || isRejected
+  const isLocked     = !isEditable && report.status !== 'draft'
   const selfApproves = currentUser && SELF_APPROVING_ROLES.has(currentUser.org_role)
+  const hasManager   = !!report.manager_name
 
   const STATUS_COLORS = {
     draft:      'text-slate-400 bg-slate-800 border-slate-600',
@@ -5607,6 +5612,14 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
     try {
       const updated = await deleteReportItem(report.id, expenseId)
       setReport(updated)
+    } catch (err) { setActionError(err.message) }
+  }
+
+  const handleEditItem = async (expenseId, data) => {
+    try {
+      const updated = await updateReportItem(report.id, expenseId, data)
+      setReport(updated)
+      setEditingItem(null)
     } catch (err) { setActionError(err.message) }
   }
 
@@ -5680,13 +5693,25 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
           )}
         </div>
 
+        {/* Locked banner */}
+        {isLocked && (
+          <div className="flex items-center gap-2.5 px-4 py-3 bg-slate-800/60 border border-slate-700/50 rounded-2xl">
+            <Lock className="h-4 w-4 text-slate-500 shrink-0" />
+            <p className="text-xs text-slate-400">
+              {report.status === 'submitted'
+                ? `Submitted for approval${hasManager ? ` · awaiting ${report.manager_name}` : ''} — items are locked`
+                : 'This report is locked and cannot be edited'}
+            </p>
+          </div>
+        )}
+
         {/* Expense line items */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Expense Items ({report.expenses.length})
             </p>
-            {isDraft && (
+            {isEditable && (
               <button onClick={() => setShowAddItem(true)}
                 className="flex items-center gap-1 text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors">
                 <Plus className="h-3.5 w-3.5" /> Add Item
@@ -5695,11 +5720,11 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
           </div>
 
           {report.expenses.length === 0 ? (
-            <button onClick={() => isDraft && setShowAddItem(true)}
-              className={`w-full flex flex-col items-center justify-center py-10 text-center bg-slate-800/40 border border-dashed border-slate-700 rounded-2xl ${isDraft ? 'hover:border-indigo-500/40 hover:bg-slate-800/60 transition-colors cursor-pointer' : 'cursor-default'}`}>
+            <button onClick={() => isEditable && setShowAddItem(true)}
+              className={`w-full flex flex-col items-center justify-center py-10 text-center bg-slate-800/40 border border-dashed border-slate-700 rounded-2xl ${isEditable ? 'hover:border-indigo-500/40 hover:bg-slate-800/60 transition-colors cursor-pointer' : 'cursor-default'}`}>
               <Receipt className="h-8 w-8 text-slate-700 mb-2" />
               <p className="text-sm text-slate-500 font-medium">No expense items yet</p>
-              {isDraft && <p className="text-xs text-indigo-500 mt-1 font-semibold">+ Tap to add first item</p>}
+              {isEditable && <p className="text-xs text-indigo-500 mt-1 font-semibold">+ Tap to add first item</p>}
             </button>
           ) : (
             <div className="space-y-2">
@@ -5718,11 +5743,17 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
                         </p>
                       </div>
                       <span className="text-sm font-bold text-slate-200 shrink-0">{e.currency || report.currency} {Number(e.amount).toFixed(2)}</span>
-                      {isDraft && (
-                        <button onClick={() => handleRemoveItem(e.id)}
-                          className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors shrink-0">
-                          <X className="h-3.5 w-3.5" />
-                        </button>
+                      {isEditable && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => setEditingItem(e)}
+                            className="p-1.5 text-slate-600 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-lg transition-colors">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => handleRemoveItem(e.id)}
+                            className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       )}
                     </div>
                     {e.receipt_image && (
@@ -5743,33 +5774,46 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
       </div>
 
       {/* Footer actions */}
-      {(isDraft || report.status === 'rejected') && (
+      {isEditable && (
         <div className="absolute bottom-0 left-0 right-0 px-4 py-4 border-t border-slate-800 space-y-2 bg-slate-900">
-          {isDraft && (
-            <>
-              {selfApproves && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl mb-1">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                  <p className="text-xs text-emerald-300 font-medium">No approval required — your role auto-approves</p>
-                </div>
-              )}
-              <button onClick={handleSubmit} disabled={submitLoading || report.expenses.length === 0}
-                className={`w-full py-3.5 disabled:opacity-40 text-white font-bold rounded-2xl transition-colors flex justify-center items-center gap-2 ${
-                  selfApproves
-                    ? 'bg-emerald-500 hover:bg-emerald-600'
-                    : 'bg-indigo-500 hover:bg-indigo-600'
-                }`}>
-                {submitLoading
-                  ? <Loader2 className="animate-spin h-4 w-4" />
-                  : selfApproves
-                    ? <><CheckCircle2 className="h-4 w-4" /> Approve & Submit</>
-                    : <><Send className="h-4 w-4" /> Submit for Approval</>
-                }
-              </button>
-              {report.expenses.length === 0 && (
-                <p className="text-center text-xs text-slate-600">Add at least one expense item before submitting</p>
-              )}
-            </>
+          {/* Approval routing hint */}
+          {selfApproves ? (
+            <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              <p className="text-xs text-emerald-300 font-medium">No approval required — your role auto-approves</p>
+            </div>
+          ) : hasManager ? (
+            <div className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+              <Send className="h-4 w-4 text-blue-400 shrink-0" />
+              <p className="text-xs text-blue-300 font-medium">Will be sent to <span className="font-bold">{report.manager_name}</span> for approval</p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl">
+              <CheckCircle2 className="h-4 w-4 text-slate-500 shrink-0" />
+              <p className="text-xs text-slate-400 font-medium">No manager assigned — will auto-approve on submit</p>
+            </div>
+          )}
+          {isRejected && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+              <p className="text-xs text-amber-300 font-medium">Rejected — fix the items above and resubmit</p>
+            </div>
+          )}
+          <button onClick={handleSubmit} disabled={submitLoading || report.expenses.length === 0}
+            className={`w-full py-3.5 disabled:opacity-40 text-white font-bold rounded-2xl transition-colors flex justify-center items-center gap-2 ${
+              selfApproves || !hasManager
+                ? 'bg-emerald-500 hover:bg-emerald-600'
+                : 'bg-indigo-500 hover:bg-indigo-600'
+            }`}>
+            {submitLoading
+              ? <Loader2 className="animate-spin h-4 w-4" />
+              : selfApproves || !hasManager
+                ? <><CheckCircle2 className="h-4 w-4" /> {isRejected ? 'Fix & Resubmit' : 'Approve & Submit'}</>
+                : <><Send className="h-4 w-4" /> {isRejected ? 'Fix & Resubmit' : 'Submit for Approval'}</>
+            }
+          </button>
+          {report.expenses.length === 0 && (
+            <p className="text-center text-xs text-slate-600">Add at least one expense item before submitting</p>
           )}
           <button onClick={handleDelete} disabled={deleteLoading}
             className="w-full py-2.5 text-red-400 hover:text-red-300 text-sm font-semibold rounded-2xl transition-colors flex justify-center items-center gap-2 hover:bg-red-500/10">
@@ -5788,18 +5832,29 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
             onAdded={(updated) => { setReport(updated); setShowAddItem(false) }}
           />
         )}
+        {editingItem && (
+          <AddItemModal
+            reportId={report.id}
+            currency={report.currency}
+            item={editingItem}
+            onClose={() => setEditingItem(null)}
+            onAdded={(updated) => { setReport(updated); setEditingItem(null) }}
+            onSaved={(expenseId, data) => handleEditItem(expenseId, data)}
+          />
+        )}
       </AnimatePresence>
     </motion.div>
   )
 }
 
-function AddItemModal({ reportId, currency, onClose, onAdded }) {
-  const [desc, setDesc]             = useState('')
-  const [date, setDate]             = useState(todayISO())
-  const [amount, setAmount]         = useState('')
-  const [category, setCategory]     = useState('other')
-  const [receipt, setReceipt]       = useState(null)  // base64
-  const [receiptName, setReceiptName] = useState('')
+function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSaved = null }) {
+  const isEditing = !!item
+  const [desc, setDesc]             = useState(item?.description || '')
+  const [date, setDate]             = useState(item?.date ? item.date.slice(0,10) : todayISO())
+  const [amount, setAmount]         = useState(item?.amount != null ? String(item.amount) : '')
+  const [category, setCategory]     = useState(item?.category || 'other')
+  const [receipt, setReceipt]       = useState(item?.receipt_image || null)
+  const [receiptName, setReceiptName] = useState(item?.receipt_image ? 'existing' : '')
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState('')
   const fileRef = useRef(null)
@@ -5819,16 +5874,21 @@ function AddItemModal({ reportId, currency, onClose, onAdded }) {
     const amt = parseFloat(amount)
     if (!amt || amt <= 0) { setError('Enter a valid amount'); return }
     setLoading(true); setError('')
+    const data = {
+      description: desc.trim(),
+      amount: amt,
+      date: date || null,
+      category,
+      currency,
+      receipt_image: receipt || null,
+    }
     try {
-      const updated = await addReportItem(reportId, {
-        description: desc.trim(),
-        amount: amt,
-        date: date || null,
-        category,
-        currency,
-        receipt_image: receipt || null,
-      })
-      onAdded(updated)
+      if (isEditing && onSaved) {
+        await onSaved(item.id, data)
+      } else {
+        const updated = await addReportItem(reportId, data)
+        onAdded(updated)
+      }
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -5840,7 +5900,10 @@ function AddItemModal({ reportId, currency, onClose, onAdded }) {
         className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/50 shrink-0">
           <h3 className="font-bold text-white flex items-center gap-2">
-            <Receipt className="h-4 w-4 text-indigo-400" /> Add Expense Item
+            {isEditing
+              ? <><Pencil className="h-4 w-4 text-indigo-400" /> Edit Expense Item</>
+              : <><Receipt className="h-4 w-4 text-indigo-400" /> Add Expense Item</>
+            }
           </h3>
           <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
             <X className="h-4 w-4" />
@@ -5914,7 +5977,7 @@ function AddItemModal({ reportId, currency, onClose, onAdded }) {
 
           <button type="submit" disabled={loading}
             className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2">
-            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : <><Check className="h-4 w-4" /> Save Item</>}
+            {loading ? <Loader2 className="animate-spin h-4 w-4" /> : isEditing ? <><Check className="h-4 w-4" /> Save Changes</> : <><Check className="h-4 w-4" /> Add Item</>}
           </button>
         </form>
       </motion.div>

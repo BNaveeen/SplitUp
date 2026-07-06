@@ -544,8 +544,8 @@ def update_report(
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "draft":
-        raise HTTPException(status_code=400, detail="Only draft reports can be edited")
+    if report.status not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="Only draft or rejected reports can be edited")
     if body.title is not None:      report.title       = body.title.strip()
     if body.description is not None: report.description = body.description
     if body.currency is not None:   report.currency    = body.currency
@@ -597,16 +597,29 @@ def submit_report(
     if not report.expenses:
         raise HTTPException(status_code=400, detail="Add at least one expense before submitting")
 
+    if report.status not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="Only draft or rejected reports can be submitted")
+
     user = db.query(User).filter(User.id == uid).first()
-    # admin category self-approves — no manager sign-off required
     SELF_APPROVING_ROLES = {"admin"}
     if user and user.org_role in SELF_APPROVING_ROLES:
+        # Org admins self-approve
         report.status         = "approved"
         report.reviewed_by_id = uid
         report.reviewed_at    = datetime.utcnow()
-        report.review_notes   = "Auto-approved: senior role"
+        report.review_notes   = "Auto-approved: admin role"
+    elif not report.manager_id:
+        # No manager assigned — auto-approve
+        report.status         = "approved"
+        report.reviewed_by_id = uid
+        report.reviewed_at    = datetime.utcnow()
+        report.review_notes   = "Auto-approved: no manager assigned"
     else:
-        report.status = "submitted"
+        # Has a manager — route through approval
+        report.status       = "submitted"
+        report.reviewed_by_id = None
+        report.reviewed_at    = None
+        report.review_notes   = None
 
     report.updated_at = datetime.utcnow()
     db.commit()
@@ -626,7 +639,7 @@ def add_expense_to_report(
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "draft":
+    if report.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
 
     expense = db.query(Expense).filter(Expense.id == expense_id, Expense.payer_id == uid).first()
@@ -654,7 +667,7 @@ def remove_expense_from_report(
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "draft":
+    if report.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
 
     expense = db.query(Expense).filter(Expense.id == expense_id, Expense.report_id == report_id).first()
@@ -683,7 +696,7 @@ def add_report_item(
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "draft":
+    if report.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
 
     date_val = None
@@ -729,7 +742,7 @@ def delete_report_item(
     ).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    if report.status != "draft":
+    if report.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
 
     expense = db.query(Expense).filter(
@@ -747,7 +760,52 @@ def delete_report_item(
     return _fmt_report(report)
 
 
-# ── Manager: Approvals ────────────────────────────────────────────────────────
+@router.put("/my/reports/{report_id}/items/{expense_id}")
+def update_report_item(
+    report_id: int,
+    expense_id: int,
+    body: WorkExpenseItem,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    report = db.query(ExpenseReport).filter(
+        ExpenseReport.id == report_id,
+        ExpenseReport.submitted_by_id == uid,
+    ).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.status not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="Cannot modify a submitted report")
+
+    expense = db.query(Expense).filter(
+        Expense.id == expense_id,
+        Expense.report_id == report_id,
+    ).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense item not found in this report")
+
+    expense.description = body.description.strip()
+    expense.amount      = body.amount
+    expense.category    = body.category
+    expense.currency    = body.currency or report.currency or "GBP"
+    if body.date:
+        try:
+            expense.date = datetime.fromisoformat(body.date)
+        except Exception:
+            pass
+    if body.receipt_image is not None:
+        expense.receipt_image = body.receipt_image or None
+
+    db.commit()
+    db.refresh(report)
+    report.total_amount = sum(float(e.amount) for e in report.expenses)
+    report.updated_at   = datetime.utcnow()
+    db.commit()
+    db.refresh(report)
+    return _fmt_report(report)
+
+
+# ── Manager: Approvals ──────────��─────────────────────────────��────────────────
 
 @router.get("/my/approvals")
 def list_pending_approvals(
