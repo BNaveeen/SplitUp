@@ -400,6 +400,7 @@ export const deleteReport     = (id) => apiFetch(`/my/reports/${id}`, { method: 
 export const submitReport     = (id) => apiFetch(`/my/reports/${id}/submit`, { method: 'POST' })
 export const addExpenseToReport      = (reportId, expenseId) => apiFetch(`/my/reports/${reportId}/expenses/${expenseId}`, { method: 'POST' })
 export const removeExpenseFromReport = (reportId, expenseId) => apiFetch(`/my/reports/${reportId}/expenses/${expenseId}`, { method: 'DELETE' })
+export const extractInvoiceAmount = (image) => apiFetch('/my/reports/extract-amount', { method: 'POST', body: JSON.stringify({ image }) })
 export const addReportItem    = (reportId, data) => apiFetch(`/my/reports/${reportId}/items`, { method: 'POST', body: JSON.stringify(data) })
 export const updateReportItem = (reportId, expenseId, data) => apiFetch(`/my/reports/${reportId}/items/${expenseId}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteReportItem = (reportId, expenseId) => apiFetch(`/my/reports/${reportId}/items/${expenseId}`, { method: 'DELETE' })

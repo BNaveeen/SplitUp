@@ -28,7 +28,7 @@ import {
   orgListMembers, orgStats, orgAllReports, orgAddMember, orgCreateMember, orgUpdateMember, orgRemoveMember,
   orgCreateDept, orgDeleteDept, orgApproveReport, orgRejectReport, orgReimburseReport,
   fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
-  addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem,
+  addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem, extractInvoiceAmount,
   fetchMyApprovals, approveReport, rejectReport, reimburseReport,
 } from './api'
 
@@ -5849,38 +5849,65 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
 
 function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSaved = null }) {
   const isEditing = !!item
-  const [desc, setDesc]             = useState(item?.description || '')
-  const [date, setDate]             = useState(item?.date ? item.date.slice(0,10) : todayISO())
-  const [amount, setAmount]         = useState(item?.amount != null ? String(item.amount) : '')
-  const [category, setCategory]     = useState(item?.category || 'other')
-  const [receipt, setReceipt]       = useState(item?.receipt_image || null)
+  const [desc, setDesc]               = useState(item?.description || '')
+  const [date, setDate]               = useState(item?.date ? item.date.slice(0,10) : todayISO())
+  const [amount, setAmount]           = useState(item?.amount != null ? String(item.amount) : '')
+  const [invoiceVerify, setVerify]    = useState('')   // must match amount
+  const [category, setCategory]       = useState(item?.category || 'other')
+  const [receipt, setReceipt]         = useState(item?.receipt_image || null)
   const [receiptName, setReceiptName] = useState(item?.receipt_image ? 'existing' : '')
-  const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState('')
+  const [detecting, setDetecting]     = useState(false)
+  const [detected, setDetected]       = useState(false)
+  const [loading, setLoading]         = useState(false)
+  const [error, setError]             = useState('')
   const fileRef = useRef(null)
+
+  const amtNum     = parseFloat(amount)
+  const verifyNum  = parseFloat(invoiceVerify)
+  const amountOk   = !isNaN(amtNum) && amtNum > 0
+  const verifyOk   = receipt && !isNaN(verifyNum) && Math.abs(verifyNum - amtNum) < 0.005
+  const verifyMismatch = receipt && invoiceVerify !== '' && !isNaN(verifyNum) && !verifyOk
 
   const handleImage = (e) => {
     const file = e.target.files[0]
     if (!file) return
     setReceiptName(file.name)
     const reader = new FileReader()
-    reader.onload = (ev) => setReceipt(ev.target.result)
+    reader.onload = async (ev) => {
+      const dataUrl = ev.target.result
+      setReceipt(dataUrl)
+      setDetecting(true); setDetected(false)
+      try {
+        const res = await extractInvoiceAmount(dataUrl)
+        if (res.amount != null) {
+          const detected = String(res.amount)
+          setAmount(detected)
+          setVerify(detected)
+          setDetected(true)
+        }
+      } catch (_) {
+        // extraction failed silently — user fills manually
+      } finally {
+        setDetecting(false)
+      }
+    }
     reader.readAsDataURL(file)
   }
 
   const handleSave = async (e) => {
     e.preventDefault()
     if (!desc.trim()) { setError('Description is required'); return }
-    const amt = parseFloat(amount)
-    if (!amt || amt <= 0) { setError('Enter a valid amount'); return }
+    if (!amountOk)    { setError('Enter a valid amount'); return }
+    if (!receipt)     { setError('Invoice / receipt is required'); return }
+    if (!verifyOk)    { setError(`Invoice total must match the amount (${currency} ${amtNum.toFixed(2)})`); return }
     setLoading(true); setError('')
     const data = {
       description: desc.trim(),
-      amount: amt,
+      amount: amtNum,
       date: date || null,
       category,
       currency,
-      receipt_image: receipt || null,
+      receipt_image: receipt,
     }
     try {
       if (isEditing && onSaved) {
@@ -5927,8 +5954,12 @@ function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSav
                 className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
             </div>
             <div>
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Amount ({currency})</label>
-              <input type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(e.target.value)}
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                Amount ({currency}) *
+                {detecting && <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />}
+                {detected && !detecting && <span className="text-[9px] text-emerald-400 font-bold">AUTO</span>}
+              </label>
+              <input type="number" step="0.01" min="0.01" value={amount} onChange={e => { setAmount(e.target.value); setVerify(e.target.value); setDetected(false) }}
                 className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500 text-slate-100 placeholder-slate-500"
                 placeholder="0.00" />
             </div>
@@ -5952,31 +5983,63 @@ function AddItemModal({ reportId, currency, onClose, onAdded, item = null, onSav
             </div>
           </div>
 
-          {/* Receipt upload */}
+          {/* Receipt upload — mandatory */}
           <div>
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Receipt / Invoice</label>
-            <input ref={fileRef} type="file" accept="image/*" onChange={handleImage} className="hidden" />
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+              Invoice / Receipt * <span className="text-rose-400 font-bold">Required</span>
+            </label>
+            <input ref={fileRef} type="file" accept="image/*,application/pdf" onChange={handleImage} className="hidden" />
             {receipt ? (
-              <div className="relative">
-                <img src={receipt} alt="receipt preview" className="w-full max-h-36 object-cover rounded-xl border border-slate-700/50" />
-                <button type="button" onClick={() => { setReceipt(null); setReceiptName(''); fileRef.current.value = '' }}
-                  className="absolute top-2 right-2 p-1 bg-slate-900/80 hover:bg-red-500/80 text-white rounded-full transition-colors">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-                <p className="text-[10px] text-slate-500 mt-1 truncate">{receiptName}</p>
+              <div className="space-y-2">
+                <div className="relative">
+                  <img src={receipt} alt="receipt preview" className="w-full max-h-48 object-contain rounded-xl border border-emerald-500/30 bg-slate-900/60" />
+                  <button type="button" onClick={() => { setReceipt(null); setReceiptName(''); setVerify(''); if (fileRef.current) fileRef.current.value = '' }}
+                    className="absolute top-2 right-2 p-1 bg-slate-900/80 hover:bg-red-500/80 text-white rounded-full transition-colors">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Uploaded</span>
+                </div>
+                {/* Verify invoice total */}
+                <div>
+                  <label className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                    {detecting
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" /><span className="text-indigo-300">Detecting invoice amount…</span></>
+                      : verifyOk
+                        ? <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><span className="text-emerald-400">{detected ? 'Amount auto-detected from invoice' : 'Invoice total verified'}</span></>
+                        : <><AlertTriangle className="h-3.5 w-3.5 text-amber-400" /><span className="text-amber-300">Enter total shown on invoice to verify</span></>
+                    }
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-medium">{currency}</span>
+                    <input type="number" step="0.01" min="0.01" value={invoiceVerify}
+                      onChange={e => setVerify(e.target.value)}
+                      placeholder="0.00"
+                      className={`w-full pl-12 pr-4 py-2.5 bg-slate-900/60 rounded-xl text-sm focus:outline-none text-slate-100 placeholder-slate-500 border ${
+                        verifyOk ? 'border-emerald-500/50 focus:border-emerald-500' : verifyMismatch ? 'border-rose-500/60 focus:border-rose-500' : 'border-slate-700 focus:border-indigo-500'
+                      }`} />
+                    {verifyOk && <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-emerald-400" />}
+                  </div>
+                  {verifyMismatch && (
+                    <p className="text-xs text-rose-400 mt-1">
+                      Doesn't match — field says {currency} {amountOk ? amtNum.toFixed(2) : '—'}
+                    </p>
+                  )}
+                </div>
               </div>
             ) : (
               <button type="button" onClick={() => fileRef.current.click()}
-                className="w-full flex items-center justify-center gap-2 py-3.5 border-2 border-dashed border-slate-700 hover:border-indigo-500/50 rounded-xl text-sm text-slate-500 hover:text-indigo-400 transition-colors">
-                <Receipt className="h-4 w-4" /> Upload receipt or invoice
+                className="w-full flex flex-col items-center justify-center gap-1.5 py-5 border-2 border-dashed border-rose-500/40 hover:border-rose-500/60 bg-rose-500/5 hover:bg-rose-500/10 rounded-xl text-sm transition-colors">
+                <Receipt className="h-6 w-6 text-rose-400" />
+                <span className="text-rose-400 font-semibold text-xs">Upload invoice / receipt</span>
+                <span className="text-slate-600 text-[10px]">Required before saving</span>
               </button>
             )}
           </div>
 
           {error && <p className="text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
 
-          <button type="submit" disabled={loading}
-            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2">
+          <button type="submit" disabled={loading || !receipt || !verifyOk}
+            className="w-full py-3 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors flex justify-center items-center gap-2">
             {loading ? <Loader2 className="animate-spin h-4 w-4" /> : isEditing ? <><Check className="h-4 w-4" /> Save Changes</> : <><Check className="h-4 w-4" /> Add Item</>}
           </button>
         </form>
