@@ -601,25 +601,24 @@ def submit_report(
         raise HTTPException(status_code=400, detail="Only draft or rejected reports can be submitted")
 
     user = db.query(User).filter(User.id == uid).first()
-    SELF_APPROVING_ROLES = {"admin"}
-    if user and user.org_role in SELF_APPROVING_ROLES:
-        # Org admins self-approve
+    if report.manager_id:
+        # Manager assigned — always requires approval regardless of role
+        report.status         = "submitted"
+        report.reviewed_by_id = None
+        report.reviewed_at    = None
+        report.review_notes   = None
+    elif user and user.org_role == "admin":
+        # Admin with no manager — self-approve
         report.status         = "approved"
         report.reviewed_by_id = uid
         report.reviewed_at    = datetime.utcnow()
-        report.review_notes   = "Auto-approved: admin role"
-    elif not report.manager_id:
-        # No manager assigned — auto-approve
+        report.review_notes   = "Auto-approved: admin role, no manager assigned"
+    else:
+        # No manager, not admin — auto-approve
         report.status         = "approved"
         report.reviewed_by_id = uid
         report.reviewed_at    = datetime.utcnow()
         report.review_notes   = "Auto-approved: no manager assigned"
-    else:
-        # Has a manager — route through approval
-        report.status       = "submitted"
-        report.reviewed_by_id = None
-        report.reviewed_at    = None
-        report.review_notes   = None
 
     report.updated_at = datetime.utcnow()
     db.commit()

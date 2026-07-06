@@ -5596,8 +5596,8 @@ function ReportDetailModal({ report: initialReport, currentUser, onClose }) {
   const isRejected   = report.status === 'rejected'
   const isEditable   = isDraft || isRejected
   const isLocked     = !isEditable && report.status !== 'draft'
-  const selfApproves = currentUser && SELF_APPROVING_ROLES.has(currentUser.org_role)
   const hasManager   = !!report.manager_name
+  const selfApproves = currentUser && SELF_APPROVING_ROLES.has(currentUser.org_role) && !hasManager
 
   const STATUS_COLORS = {
     draft:      'text-slate-400 bg-slate-800 border-slate-600',
