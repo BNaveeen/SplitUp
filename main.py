@@ -188,6 +188,11 @@ async def startup_event():
         "ALTER TABLE users ADD COLUMN job_title TEXT",
         # salutation / title (Mr/Mrs/Ms/Dr/Prof/Rev)
         "ALTER TABLE users ADD COLUMN title TEXT",
+        # Linked secondary emails
+        "ALTER TABLE users ADD COLUMN personal_email TEXT",
+        "ALTER TABLE users ADD COLUMN personal_email_verified BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN work_email TEXT",
+        "ALTER TABLE users ADD COLUMN work_email_verified BOOLEAN DEFAULT FALSE",
     ]:
         mig_db = SessionLocal()
         try:

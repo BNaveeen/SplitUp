@@ -87,6 +87,11 @@ class User(Base):
     org_role        = Column(String(20), nullable=True)  # null | 'member' | 'admin'
     job_title       = Column(String(100), nullable=True)
     title           = Column(String(10), nullable=True)  # Mr / Mrs / Ms / Dr / Prof / Rev
+    # Linked secondary emails (each verified independently via OTP)
+    personal_email          = Column(String, nullable=True, unique=True, index=True)
+    personal_email_verified = Column(Boolean, default=False)
+    work_email              = Column(String, nullable=True, unique=True, index=True)
+    work_email_verified     = Column(Boolean, default=False)
 
     groups        = relationship("Group", secondary=group_members, back_populates="members")
     expenses_paid = relationship("Expense", foreign_keys="[Expense.payer_id]", back_populates="payer")

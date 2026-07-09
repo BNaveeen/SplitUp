@@ -39,6 +39,10 @@ class UserResponse(BaseModel):
     org_role: Optional[str] = None  # null | 'member' | 'admin'
     job_title: Optional[str] = None
     title: Optional[str] = None
+    personal_email: Optional[str] = None
+    personal_email_verified: bool = False
+    work_email: Optional[str] = None
+    work_email_verified: bool = False
 
     class Config:
         from_attributes = True
@@ -73,6 +77,19 @@ class ResetPasswordRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class LinkEmailRequest(BaseModel):
+    email_type: str   # 'personal' | 'work'
+    email: str
+
+class VerifyLinkedEmailRequest(BaseModel):
+    email_type: str
+    email: str
+    otp: str
+
+class UnlinkEmailRequest(BaseModel):
+    email_type: str   # 'personal' | 'work'
 
 
 class GroupCreate(BaseModel):

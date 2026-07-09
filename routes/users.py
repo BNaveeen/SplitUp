@@ -1,12 +1,18 @@
+from datetime import datetime, timedelta
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import or_, and_, select
 from sqlalchemy.orm import Session
 
-from database import User, Expense, ExpenseSplit, Notification, Settlement, group_members
-from routes.deps import get_db, get_current_user_id
+from database import User, Expense, ExpenseSplit, Notification, Settlement, group_members, EmailVerification
+from routes.deps import get_db, get_current_user_id, limiter
 from services.helpers import _format_expense, _EXPENSE_LOAD_OPTIONS
-from schemas import UserResponse, UserUpdate, NotificationResponse, ExpenseResponse, SettlementResponse, GroupDetailResponse
+from services.email import generate_otp, send_email, otp_email_html
+from schemas import (
+    UserResponse, UserUpdate, NotificationResponse, ExpenseResponse,
+    SettlementResponse, GroupDetailResponse,
+    LinkEmailRequest, VerifyLinkedEmailRequest, UnlinkEmailRequest,
+)
 
 router = APIRouter()
 
@@ -271,3 +277,122 @@ def get_initiated_settlements(
         )
         for s in settlements
     ]
+
+
+# ── Linked email endpoints ─────────────────────────────────────────────────────
+
+@router.post("/users/{user_id}/link-email", response_model=dict)
+@limiter.limit("5/minute")
+def link_email(
+    request: Request,
+    user_id: int,
+    body: LinkEmailRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if current_user_id != user_id:
+        raise HTTPException(403, "Forbidden")
+    if body.email_type not in ("personal", "work"):
+        raise HTTPException(400, "email_type must be 'personal' or 'work'")
+
+    new_email = body.email.strip().lower()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if new_email == user.email.lower():
+        raise HTTPException(400, "That is already your primary login email")
+
+    # Email must not be taken by any other user (primary or linked)
+    taken = db.query(User).filter(
+        User.id != user_id,
+        or_(
+            User.email.ilike(new_email),
+            and_(User.personal_email.isnot(None), User.personal_email.ilike(new_email)),
+            and_(User.work_email.isnot(None), User.work_email.ilike(new_email)),
+        )
+    ).first()
+    if taken:
+        raise HTTPException(400, "That email is already linked to another account")
+
+    # Store a pending (unverified) email on the user so the frontend knows what's pending
+    if body.email_type == "personal":
+        user.personal_email = new_email
+        user.personal_email_verified = False
+    else:
+        user.work_email = new_email
+        user.work_email_verified = False
+    db.flush()
+
+    # Send OTP to the new address
+    db.query(EmailVerification).filter(EmailVerification.email == new_email).delete()
+    otp = generate_otp()
+    db.add(EmailVerification(email=new_email, otp=otp,
+                             expires_at=datetime.utcnow() + timedelta(minutes=10)))
+    db.commit()
+    db.refresh(user)
+
+    label = "personal" if body.email_type == "personal" else "work"
+    send_email(
+        new_email,
+        f"Verify your {label} email — SplitUp",
+        otp_email_html(otp, f"Use this code to verify your {label} email address and link it to your SplitUp account."),
+    )
+    return {"message": "otp_sent", "email": new_email}
+
+
+@router.post("/users/{user_id}/verify-linked-email", response_model=UserResponse)
+@limiter.limit("10/minute")
+def verify_linked_email(
+    request: Request,
+    user_id: int,
+    body: VerifyLinkedEmailRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if current_user_id != user_id:
+        raise HTTPException(403, "Forbidden")
+
+    email = body.email.strip().lower()
+    ev = (db.query(EmailVerification)
+          .filter(EmailVerification.email == email, EmailVerification.used == False)
+          .order_by(EmailVerification.created_at.desc())
+          .first())
+    if not ev or ev.otp != body.otp.strip() or datetime.utcnow() > ev.expires_at:
+        raise HTTPException(400, "Invalid or expired code")
+
+    ev.used = True
+    user = db.query(User).filter(User.id == user_id).first()
+    if body.email_type == "personal":
+        user.personal_email = email
+        user.personal_email_verified = True
+    else:
+        user.work_email = email
+        user.work_email_verified = True
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.delete("/users/{user_id}/unlink-email", response_model=UserResponse)
+def unlink_email(
+    user_id: int,
+    body: UnlinkEmailRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if current_user_id != user_id:
+        raise HTTPException(403, "Forbidden")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if body.email_type == "personal":
+        user.personal_email = None
+        user.personal_email_verified = False
+    elif body.email_type == "work":
+        user.work_email = None
+        user.work_email_verified = False
+    else:
+        raise HTTPException(400, "email_type must be 'personal' or 'work'")
+    db.commit()
+    db.refresh(user)
+    return user
