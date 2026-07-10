@@ -825,6 +825,13 @@ function ResetPasswordView({ email, onReset, onBack }) {
   )
 }
 
+// ── Personal domain detection ──────────────────────────────────────────────────
+const PERSONAL_DOMAINS = ['gmail.com','yahoo.com','hotmail.com','outlook.com','live.com','icloud.com','me.com','protonmail.com','ymail.com','aol.com']
+const hasPersonalEmail = (user) => {
+  const domain = user?.email?.split('@')[1]?.toLowerCase() || ''
+  return PERSONAL_DOMAINS.includes(domain) || !!user?.personal_email
+}
+
 // ── Plan constants ─────────────────────────────────────────────────────────────
 const PLAN_LABEL = { free: 'Free', pro: 'Pro', business: 'Premium' }
 const PLAN_COLOR = {
@@ -1008,7 +1015,8 @@ function LogoutModal({ onConfirm, onCancel }) {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   const [activeTab, setActiveTab]   = useState('groups')
-  const [workMode, setWorkMode]     = useState(false)   // Personal vs Work context
+  const userHasPersonal = hasPersonalEmail(user)
+  const [workMode, setWorkMode]     = useState(user.organisation_id && !userHasPersonal)   // default work if org-only user
   const [groups, setGroups]         = useState([])
   const [users, setUsers]           = useState([])
   const [selectedGroup, setGroup]   = useState(null)  // GroupDetailView
@@ -1250,24 +1258,31 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
             )}
             {/* Center: mode switcher for org users (no group, no admin), else app/group title */}
             {user.organisation_id && !selectedGroup && !showAdmin ? (
-              <div className="flex bg-slate-800/70 rounded-xl p-0.5 border border-slate-700/40 shadow-sm">
-                <button
-                  onClick={() => { setWorkMode(false); setActiveTab('groups') }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
-                    !workMode ? 'bg-indigo-600/90 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-                  }`}>
-                  <Home className="h-3 w-3" />
-                  Personal
-                </button>
-                <button
-                  onClick={() => { setWorkMode(true); setActiveTab('work') }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
-                    workMode ? 'bg-amber-600/90 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-                  }`}>
+              userHasPersonal ? (
+                <div className="flex bg-slate-800/70 rounded-xl p-0.5 border border-slate-700/40 shadow-sm">
+                  <button
+                    onClick={() => { setWorkMode(false); setActiveTab('groups') }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
+                      !workMode ? 'bg-indigo-600/90 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                    }`}>
+                    <Home className="h-3 w-3" />
+                    Personal
+                  </button>
+                  <button
+                    onClick={() => { setWorkMode(true); setActiveTab('work') }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
+                      workMode ? 'bg-amber-600/90 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                    }`}>
+                    <Briefcase className="h-3 w-3" />
+                    Work
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold text-amber-300 bg-amber-600/15 border border-amber-500/25">
                   <Briefcase className="h-3 w-3" />
                   Work
-                </button>
-              </div>
+                </div>
+              )
             ) : (
               <button onClick={() => { setShowAdmin(false); setGroup(null); setFocusExpenseId(null); setActiveTab('groups'); setWorkMode(false) }}
                 className="font-bold text-white text-lg hover:text-indigo-300 transition-colors truncate">
@@ -7779,7 +7794,6 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
 
   // Personal-domain users (gmail, yahoo, etc.) already have a personal email as primary —
   // don't show the personal email row unless one is already linked (so they can remove it).
-  const PERSONAL_DOMAINS = ['gmail.com','yahoo.com','hotmail.com','outlook.com','live.com','icloud.com','me.com','protonmail.com','ymail.com','aol.com']
   const primaryDomain = liveUser.email.split('@')[1]?.toLowerCase() || ''
   const primaryIsPersonal = PERSONAL_DOMAINS.includes(primaryDomain)
   const showPersonalEmailRow = !primaryIsPersonal || !!liveUser.personal_email
