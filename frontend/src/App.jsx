@@ -8,7 +8,7 @@ import {
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
   KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText,
   Moon, Sun, Briefcase, Building2, ClipboardList, ChevronDown, AlertCircle, Clock, Inbox,
-  LayoutDashboard, Pencil, Lock, AlertTriangle, Camera, Upload
+  LayoutDashboard, Pencil, Lock, AlertTriangle, Camera, Upload, Sparkles
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -27,7 +27,7 @@ import {
   adminListOrgs, adminCreateOrg, adminDeleteOrg, adminCreateDept, adminDeleteDept, adminAssignCorporate,
   orgListMembers, orgStats, orgAllReports, orgAddMember, orgCreateMember, orgUpdateMember, orgRemoveMember,
   orgCreateDept, orgDeleteDept, orgApproveReport, orgRejectReport, orgReimburseReport,
-  setOrgMemberStatus, claimPersonalTrial, claimOrgTrial, fetchAppSettings, updateAppSettings, fetchTrialStats,
+  setOrgMemberStatus, claimPersonalTrial, claimOrgTrial, fetchAppSettings, updateAppSettings, fetchTrialStats, fetchTrialInfo,
   fetchMyOrg, fetchMyReports, createReport, updateReport, deleteReport, submitReport,
   addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem,
   fetchMyApprovals, approveReport, rejectReport, reimburseReport,
@@ -826,16 +826,16 @@ function ResetPasswordView({ email, onReset, onBack }) {
 }
 
 // ── Plan constants ─────────────────────────────────────────────────────────────
-const PLAN_LABEL = { free: 'Free', pro: 'Pro', business: 'Business' }
+const PLAN_LABEL = { free: 'Free', pro: 'Pro', business: 'Premium' }
 const PLAN_COLOR = {
   free:     'text-slate-400 bg-slate-800 border-slate-700',
   pro:      'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
   business: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
 }
 const PLAN_FEATURES = {
-  free:     ['Up to 3 groups', 'Up to 10 members/group', 'Up to 50 expenses/group', 'Basic expense splitting'],
-  pro:      ['Unlimited groups', 'Unlimited members', 'Unlimited expenses', 'CSV & PDF export', 'Invite links', 'Settle All', 'Expense insights', 'Date filtering', 'Expense chat', 'Member roles', 'Member deactivate', 'Recurring expenses'],
-  business: ['Everything in Pro', 'Group budgets', 'People tab', 'Priority support'],
+  free:     ['Up to 3 groups', 'Up to 5 members/group', 'Up to 30 expenses/group', 'Basic expense splitting'],
+  pro:      ['Unlimited groups & expenses', 'Up to 15 members/group', 'Real-time updates', 'CSV & PDF export', 'Invite links', 'Settle All', 'Expense insights', 'Date filtering', 'Expense chat', 'Member roles & deactivation', 'Recurring expenses'],
+  business: ['Everything in Pro', 'Unlimited members/group', 'Group budgets', 'People tab', 'Priority support'],
 }
 const PLAN_PRICE = { free: '£0/mo', pro: '£4.99/mo', business: '£14.99/mo' }
 
@@ -849,7 +849,7 @@ function UpgradeModal({ detail, onClose, currentUser, onTrialClaimed }) {
 
   useEffect(() => {
     if (alreadyClaimed) { setTrialAvailable(false); return }
-    fetchAppSettings()
+    fetchTrialInfo()
       .then(s => setTrialAvailable(s?.personal_trial_active ?? false))
       .catch(() => setTrialAvailable(false))
   }, [alreadyClaimed])
@@ -1374,6 +1374,11 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
             isAdmin={isAdmin}
             workMode={workMode}
             onUpgradeRequired={setUpgradeModal}
+            onTrialClaimed={(updatedUser) => {
+              setUser(updatedUser)
+              setShowProfile(false)
+              loadData()
+            }}
             theme={theme}
             onThemeChange={onThemeChange}
             onClose={() => setShowProfile(false)}
@@ -1470,9 +1475,9 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
                     ? <PeopleTab users={users} currentUser={user} groups={groups} globalBalances={globalBalances} initiatedSettlements={initiatedSettlements} pendingSettlements={pendingSettlements} allSettlements={allSettlements} onSettle={loadData} />
                     : <div className="flex flex-col items-center justify-center py-24 text-center">
                         <Users className="h-12 w-12 text-slate-700 mb-4" />
-                        <p className="font-semibold text-slate-300">People tab requires Business</p>
+                        <p className="font-semibold text-slate-300">People tab requires Premium</p>
                         <p className="text-sm text-slate-500 mt-1 mb-4">See all contacts, global balances, and settle with anyone.</p>
-                        <button onClick={() => setUpgradeModal({ feature: 'people_tab', upgrade_to: 'business', current_plan: userPlan.plan })} className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl hover:opacity-90 transition-opacity">Upgrade to Business</button>
+                        <button onClick={() => setUpgradeModal({ feature: 'people_tab', upgrade_to: 'business', current_plan: userPlan.plan })} className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl hover:opacity-90 transition-opacity">Upgrade to Premium</button>
                       </div>
                 )}
                 {activeTab === 'work' && (
@@ -7563,17 +7568,40 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
   )
 }
 
-function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, isAdmin = false, workMode = false, onUpgradeRequired, theme = 'dark', onThemeChange }) {
-  const [tab, setTab]         = useState('account')
-  const [name, setName]       = useState(user.name)
-  const [title, setTitle]     = useState(user.title || '')
-  const [liveUser, setLiveUser] = useState(user)
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState('')
+function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, isAdmin = false, workMode = false, onUpgradeRequired, onTrialClaimed, theme = 'dark', onThemeChange }) {
+  const [tab, setTab]             = useState('account')
+  const [name, setName]           = useState(user.name)
+  const [title, setTitle]         = useState(user.title || '')
+  const [liveUser, setLiveUser]   = useState(user)
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState('')
+  const [trialInfo, setTrialInfo] = useState(null)
+  const [trialClaiming, setTrialClaiming] = useState(false)
+  const [trialClaimError, setTrialClaimError] = useState('')
 
   const plan        = isAdmin ? 'admin' : (userPlan.plan || 'free')
   const planDisplay = isAdmin ? 'Admin' : (PLAN_LABEL[plan] || 'Free')
   const planColor   = isAdmin ? 'text-amber-300 bg-amber-500/10 border-amber-500/30' : (PLAN_COLOR[plan] || PLAN_COLOR.free)
+
+  useEffect(() => {
+    if (tab === 'plan' && !isAdmin) {
+      fetchTrialInfo().then(setTrialInfo).catch(() => {})
+    }
+  }, [tab, isAdmin])
+
+  const handleClaimTrial = async () => {
+    setTrialClaiming(true)
+    setTrialClaimError('')
+    try {
+      const res = await claimPersonalTrial(user.id)
+      onTrialClaimed?.(res.user)
+      onClose()
+    } catch (e) {
+      setTrialClaimError(e.message || 'Could not claim trial')
+    } finally {
+      setTrialClaiming(false)
+    }
+  }
 
   // Personal-domain users (gmail, yahoo, etc.) already have a personal email as primary —
   // don't show the personal email row unless one is already linked (so they can remove it).
@@ -7717,41 +7745,107 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
               )}
 
               {/* PLAN TAB */}
-              {tab === 'plan' && !isAdmin && (
-                <div className="p-5 space-y-4">
-                  <div className={`rounded-2xl border p-4 ${
-                    plan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
-                    plan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
-                                          'bg-slate-900/50 border-slate-700/50'
-                  }`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${planColor}`}>{planDisplay}</span>
-                        <span className="text-xs text-slate-400">{PLAN_PRICE[plan] || '£0/mo'}</span>
-                      </div>
-                      {plan !== 'business' && (
-                        <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: plan === 'free' ? 'pro' : 'business', current_plan: plan }) }}
-                          className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors">
-                          <Zap className="h-3 w-3" /> Upgrade
-                        </button>
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      {(PLAN_FEATURES[plan] || PLAN_FEATURES.free).map(f => (
-                        <div key={f} className="flex items-center gap-2 text-xs text-slate-400">
-                          <Check className="h-3 w-3 text-emerald-400 shrink-0" />{f}
+              {tab === 'plan' && !isAdmin && (() => {
+                const expiresAt = userPlan.expires_at
+                const onTrial = plan === 'business' && !!expiresAt
+                const daysLeft = expiresAt ? Math.max(0, Math.ceil((new Date(expiresAt) - Date.now()) / 86400000)) : 0
+                const alreadyClaimed = !!liveUser.trial_claimed_at
+                const trialActive = trialInfo?.personal_trial_active ?? false
+                const trialDays   = trialInfo?.personal_trial_days  ?? 30
+                const showTrialOffer = plan !== 'business' && !alreadyClaimed && trialActive
+                return (
+                  <div className="p-5 space-y-3 overflow-y-auto">
+                    {/* Current plan card */}
+                    <div className={`rounded-2xl border p-4 ${
+                      plan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
+                      plan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
+                                            'bg-slate-900/50 border-slate-700/50'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${planColor}`}>{planDisplay}</span>
+                          <span className="text-xs text-slate-400">{PLAN_PRICE[plan] || '£0/mo'}</span>
                         </div>
-                      ))}
+                        {plan !== 'business' && (
+                          <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: plan === 'free' ? 'pro' : 'business', current_plan: plan }) }}
+                            className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors">
+                            <Zap className="h-3 w-3" /> Upgrade
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Trial status badge */}
+                      {onTrial && (
+                        <div className={`mb-3 text-xs rounded-lg px-3 py-1.5 flex items-center gap-1.5 border ${
+                          daysLeft <= 3 ? 'bg-red-500/10 text-red-300 border-red-500/20' :
+                                          'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                        }`}>
+                          <Clock className="h-3 w-3 shrink-0" />
+                          {daysLeft > 0
+                            ? `Free trial · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining`
+                            : 'Free trial expired — upgrade to keep Premium access'
+                          }
+                        </div>
+                      )}
+
+                      <div className="space-y-1.5">
+                        {(PLAN_FEATURES[plan] || PLAN_FEATURES.free).map(f => (
+                          <div key={f} className="flex items-center gap-2 text-xs text-slate-400">
+                            <Check className="h-3 w-3 text-emerald-400 shrink-0" />{f}
+                          </div>
+                        ))}
+                      </div>
                     </div>
+
+                    {/* Free trial offer card */}
+                    {showTrialOffer && (
+                      <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-orange-500/5 p-4">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Sparkles className="h-4 w-4 text-amber-400" />
+                          <span className="text-sm font-bold text-amber-300">Free Premium Trial</span>
+                        </div>
+                        <p className="text-xs text-slate-400 mb-3">
+                          Try Premium free for <span className="text-slate-200 font-medium">{trialDays} day{trialDays !== 1 ? 's' : ''}</span> — no card required. One-time offer.
+                        </p>
+                        {trialClaimError && <p className="text-xs text-red-400 mb-2">{trialClaimError}</p>}
+                        <button onClick={handleClaimTrial} disabled={trialClaiming}
+                          className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-60">
+                          {trialClaiming
+                            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Activating…</>
+                            : <><Sparkles className="h-3.5 w-3.5" /> Start Free Trial</>
+                          }
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Tier progression — what user can unlock */}
+                    {plan === 'free' && (
+                      <div className="space-y-2">
+                        <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'pro', current_plan: 'free' }) }}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+                          <Zap className="h-4 w-4" /> Upgrade to Pro · £4.99/mo
+                        </button>
+                        {!showTrialOffer && (
+                          <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'business', current_plan: 'free' }) }}
+                            className="w-full py-2.5 rounded-xl border border-amber-500/30 text-amber-300 text-sm font-bold hover:bg-amber-500/10 transition-colors flex items-center justify-center gap-2">
+                            <Crown className="h-4 w-4" /> Upgrade to Premium · £14.99/mo
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {plan === 'pro' && (
+                      <div className="space-y-2">
+                        {!showTrialOffer && (
+                          <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'business', current_plan: 'pro' }) }}
+                            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+                            <Crown className="h-4 w-4" /> Upgrade to Premium · £14.99/mo
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {plan === 'free' && (
-                    <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'pro', current_plan: 'free' }) }}
-                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
-                      <Zap className="h-4 w-4" /> Upgrade to Pro
-                    </button>
-                  )}
-                </div>
-              )}
+                )
+              })()}
 
             </motion.div>
           </AnimatePresence>

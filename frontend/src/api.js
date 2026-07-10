@@ -458,3 +458,6 @@ export const fetchAppSettings = () => apiFetch('/admin/app-settings')
 export const updateAppSettings = (data) =>
   apiFetch('/admin/app-settings', { method: 'PUT', body: JSON.stringify(data) })
 export const fetchTrialStats = () => apiFetch('/admin/trial-stats')
+
+// ── Trial info (public) ───────────────────────────────────────────────────────
+export const fetchTrialInfo = () => apiFetch('/trial-info')

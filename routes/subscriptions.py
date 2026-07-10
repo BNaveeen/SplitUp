@@ -19,6 +19,24 @@ def get_my_subscription(
     return get_all_features(db, current_user_id)
 
 
+@router.get("/trial-info")
+def get_trial_info(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    from database import AppSettings
+    settings = db.query(AppSettings).first()
+    if not settings:
+        return {"personal_trial_active": False, "personal_trial_days": 30,
+                "work_trial_active": False, "work_trial_days": 30}
+    return {
+        "personal_trial_active": settings.personal_trial_active,
+        "personal_trial_days": settings.personal_trial_days,
+        "work_trial_active": settings.work_trial_active,
+        "work_trial_days": settings.work_trial_days,
+    }
+
+
 @router.get("/plans")
 def get_plans(db: Session = Depends(get_db)):
     flags = get_all_flags_by_plan(db)

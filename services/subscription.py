@@ -128,12 +128,15 @@ def get_all_features(db: Session, user_id: int) -> dict:
     for key in all_keys:
         enabled, limit = _get_flag(db, plan, key)
         if key.startswith('max_'):
-            # Limit key: return the cap value (None = unlimited, int = capped)
             features[key] = limit if enabled else None
         else:
-            # Boolean feature: return plain bool
             features[key] = enabled
-    return {'plan': plan, 'features': features}
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id, Subscription.is_active == True).first()
+    return {
+        'plan': plan,
+        'features': features,
+        'expires_at': sub.expires_at.isoformat() if sub and sub.expires_at else None,
+    }
 
 
 def get_all_flags_by_plan(db: Session) -> dict:
