@@ -194,6 +194,7 @@ def _fmt_member(u: User, org: Organisation) -> dict:
         "name": u.name,
         "email": u.email,
         "org_role": u.org_role or "member",
+        "org_status": u.org_status or "active",
         "job_title": u.job_title,
         "department_id": u.department_id,
         "department_name": u.department.name if u.department else None,
