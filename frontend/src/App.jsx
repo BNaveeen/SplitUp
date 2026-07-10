@@ -832,12 +832,31 @@ const PLAN_COLOR = {
   pro:      'text-indigo-300 bg-indigo-500/10 border-indigo-500/30',
   business: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
 }
+// Each feature: { label, included: true|false|'partial', note? }
+const PLAN_FEATURE_ROWS = [
+  { key: 'groups',      label: 'Groups',              free: '3 max',        pro: 'Unlimited',    business: 'Unlimited'    },
+  { key: 'members',     label: 'Members per group',   free: '5 max',        pro: '15 max',       business: 'Unlimited'    },
+  { key: 'expenses',    label: 'Expenses per group',  free: '30 max',       pro: 'Unlimited',    business: 'Unlimited'    },
+  { key: 'realtime',    label: 'Real-time updates',   free: false,          pro: true,           business: true           },
+  { key: 'export',      label: 'CSV & PDF export',    free: false,          pro: true,           business: true           },
+  { key: 'insights',    label: 'Expense insights',    free: false,          pro: 'Basic',        business: 'Advanced'     },
+  { key: 'chat',        label: 'Expense chat',        free: false,          pro: true,           business: true           },
+  { key: 'settle',      label: 'Settle All',          free: false,          pro: true,           business: true           },
+  { key: 'invite',      label: 'Invite links',        free: false,          pro: true,           business: true           },
+  { key: 'datefilter',  label: 'Date filtering',      free: false,          pro: true,           business: true           },
+  { key: 'roles',       label: 'Member roles',        free: false,          pro: true,           business: true           },
+  { key: 'recurring',   label: 'Recurring expenses',  free: false,          pro: true,           business: true           },
+  { key: 'budget',      label: 'Group budgets',       free: false,          pro: false,          business: true           },
+  { key: 'people',      label: 'People tab',          free: false,          pro: false,          business: true           },
+  { key: 'support',     label: 'Priority support',    free: false,          pro: false,          business: true           },
+]
 const PLAN_FEATURES = {
   free:     ['Up to 3 groups', 'Up to 5 members/group', 'Up to 30 expenses/group', 'Basic expense splitting'],
   pro:      ['Unlimited groups & expenses', 'Up to 15 members/group', 'Real-time updates', 'CSV & PDF export', 'Invite links', 'Settle All', 'Expense insights', 'Date filtering', 'Expense chat', 'Member roles & deactivation', 'Recurring expenses'],
   business: ['Everything in Pro', 'Unlimited members/group', 'Group budgets', 'People tab', 'Priority support'],
 }
 const PLAN_PRICE = { free: '£0/mo', pro: '£4.99/mo', business: '£14.99/mo' }
+const PLAN_ORDER = ['free', 'pro', 'business']
 
 // ── UpgradeModal ───────────────────────────────────────────────────────────────
 function UpgradeModal({ detail, onClose, currentUser, onTrialClaimed }) {
@@ -7568,6 +7587,161 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
   )
 }
 
+// ── Plan Tab Content ───────────────────────────────────────────────────────────
+function PlanTabContent({ currentPlan, expiresAt, alreadyClaimed, trialInfo, trialClaiming, trialClaimError, onClaimTrial, onUpgrade }) {
+  const [browsePlan, setBrowsePlan] = useState(currentPlan)
+
+  const onTrial     = currentPlan === 'business' && !!expiresAt
+  const daysLeft    = expiresAt ? Math.max(0, Math.ceil((new Date(expiresAt) - Date.now()) / 86400000)) : 0
+  const trialActive = trialInfo?.personal_trial_active ?? false
+  const trialDays   = trialInfo?.personal_trial_days  ?? 30
+  const showTrialOffer = !alreadyClaimed && trialActive
+
+  const planIdx   = PLAN_ORDER.indexOf(currentPlan)
+  const browseIdx = PLAN_ORDER.indexOf(browsePlan)
+
+  const PILL = {
+    free:     { on: 'bg-slate-700 text-slate-100 border-slate-600',         off: 'text-slate-500 border-transparent hover:text-slate-300' },
+    pro:      { on: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40', off: 'text-slate-500 border-transparent hover:text-indigo-400' },
+    business: { on: 'bg-amber-500/20 text-amber-300 border-amber-500/40',   off: 'text-slate-500 border-transparent hover:text-amber-400' },
+  }
+
+  return (
+    <div>
+      {/* ── Sticky plan selector ── */}
+      <div className="sticky top-0 z-10 bg-slate-800 px-5 pt-4 pb-3 flex gap-2 border-b border-slate-700/30">
+        {PLAN_ORDER.map(p => {
+          const isCurrent = p === currentPlan
+          const isActive  = p === browsePlan
+          return (
+            <button key={p} onClick={() => setBrowsePlan(p)}
+              className={`flex-1 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                isActive ? PILL[p].on : PILL[p].off
+              }`}>
+              {isCurrent && <Check className="h-2.5 w-2.5 shrink-0" />}
+              {PLAN_LABEL[p]}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* ── Content ── */}
+      <div className="px-5 pt-4 pb-5 space-y-3">
+
+        {/* Plan detail card */}
+        <div className={`rounded-2xl border p-4 ${
+          browsePlan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
+          browsePlan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
+                                      'bg-slate-900/50 border-slate-700/50'
+        }`}>
+          {/* Card header: name + price + trial badge */}
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${PLAN_COLOR[browsePlan]}`}>
+                  {PLAN_LABEL[browsePlan]}
+                </span>
+                {browsePlan === currentPlan && (
+                  <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full">
+                    Your plan
+                  </span>
+                )}
+              </div>
+              <p className={`text-xl font-bold ${
+                browsePlan === 'business' ? 'text-amber-300' :
+                browsePlan === 'pro'      ? 'text-indigo-300' : 'text-slate-300'
+              }`}>{PLAN_PRICE[browsePlan]}</p>
+            </div>
+            {browsePlan === currentPlan && onTrial && (
+              <div className={`text-[10px] font-semibold rounded-lg px-2 py-1 flex items-center gap-1 border ${
+                daysLeft <= 3 ? 'bg-red-500/10 text-red-300 border-red-500/20' :
+                                'bg-amber-500/10 text-amber-300 border-amber-500/20'
+              }`}>
+                <Clock className="h-2.5 w-2.5 shrink-0" />
+                {daysLeft > 0 ? `Trial · ${daysLeft}d left` : 'Trial expired'}
+              </div>
+            )}
+          </div>
+
+          {/* Feature comparison rows */}
+          <div className="divide-y divide-slate-700/30">
+            {PLAN_FEATURE_ROWS.map(row => {
+              const val      = row[browsePlan]
+              const included = val !== false
+              return (
+                <div key={row.key} className="flex items-center justify-between py-2 gap-3">
+                  <span className={`text-xs ${included ? 'text-slate-300' : 'text-slate-600'}`}>{row.label}</span>
+                  {val === true ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                  ) : val === false ? (
+                    <X className="h-3 w-3 text-slate-700 shrink-0" />
+                  ) : (
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md shrink-0 ${
+                      included ? 'text-slate-300 bg-slate-700/70' : 'text-slate-600 bg-slate-800'
+                    }`}>{val}</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Trial expired banner */}
+        {browsePlan === currentPlan && onTrial && daysLeft === 0 && (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 flex items-center gap-2 text-xs text-red-300">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            Free trial expired. Upgrade to keep Premium access.
+          </div>
+        )}
+
+        {/* Free trial offer — shown on the Premium tab when eligible */}
+        {browsePlan === 'business' && showTrialOffer && (
+          <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-orange-500/5 p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Sparkles className="h-4 w-4 text-amber-400" />
+              <span className="text-sm font-bold text-amber-300">Free Premium Trial</span>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              Try Premium free for{' '}
+              <span className="text-slate-200 font-semibold">{trialDays} day{trialDays !== 1 ? 's' : ''}</span>
+              {' '}— no card needed. One-time offer.
+            </p>
+            {trialClaimError && <p className="text-xs text-red-400 mb-2">{trialClaimError}</p>}
+            <button onClick={onClaimTrial} disabled={trialClaiming}
+              className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-60">
+              {trialClaiming
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Activating…</>
+                : <><Sparkles className="h-3.5 w-3.5" /> Start Free Trial</>
+              }
+            </button>
+          </div>
+        )}
+
+        {/* Upgrade CTA — browsing a plan above current, not already offered as trial */}
+        {browseIdx > planIdx && !(browsePlan === 'business' && showTrialOffer) && (
+          <button onClick={() => onUpgrade(browsePlan)}
+            className={`w-full py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2 ${
+              browsePlan === 'business'
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                : 'bg-gradient-to-r from-indigo-600 to-purple-600'
+            }`}>
+            {browsePlan === 'business' ? <Crown className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
+            Upgrade to {PLAN_LABEL[browsePlan]} · {PLAN_PRICE[browsePlan]}
+          </button>
+        )}
+
+        {/* Lower tier note */}
+        {browseIdx < planIdx && (
+          <p className="text-center text-xs text-slate-600 py-1">
+            You are already on a higher plan than {PLAN_LABEL[browsePlan]}.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', features: {} }, isAdmin = false, workMode = false, onUpgradeRequired, onTrialClaimed, theme = 'dark', onThemeChange }) {
   const [tab, setTab]             = useState('account')
   const [name, setName]           = useState(user.name)
@@ -7745,107 +7919,18 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
               )}
 
               {/* PLAN TAB */}
-              {tab === 'plan' && !isAdmin && (() => {
-                const expiresAt = userPlan.expires_at
-                const onTrial = plan === 'business' && !!expiresAt
-                const daysLeft = expiresAt ? Math.max(0, Math.ceil((new Date(expiresAt) - Date.now()) / 86400000)) : 0
-                const alreadyClaimed = !!liveUser.trial_claimed_at
-                const trialActive = trialInfo?.personal_trial_active ?? false
-                const trialDays   = trialInfo?.personal_trial_days  ?? 30
-                const showTrialOffer = plan !== 'business' && !alreadyClaimed && trialActive
-                return (
-                  <div className="p-5 space-y-3 overflow-y-auto">
-                    {/* Current plan card */}
-                    <div className={`rounded-2xl border p-4 ${
-                      plan === 'business' ? 'bg-amber-500/5 border-amber-500/25' :
-                      plan === 'pro'      ? 'bg-indigo-500/5 border-indigo-500/25' :
-                                            'bg-slate-900/50 border-slate-700/50'
-                    }`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full border ${planColor}`}>{planDisplay}</span>
-                          <span className="text-xs text-slate-400">{PLAN_PRICE[plan] || '£0/mo'}</span>
-                        </div>
-                        {plan !== 'business' && (
-                          <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: plan === 'free' ? 'pro' : 'business', current_plan: plan }) }}
-                            className="text-xs font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors">
-                            <Zap className="h-3 w-3" /> Upgrade
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Trial status badge */}
-                      {onTrial && (
-                        <div className={`mb-3 text-xs rounded-lg px-3 py-1.5 flex items-center gap-1.5 border ${
-                          daysLeft <= 3 ? 'bg-red-500/10 text-red-300 border-red-500/20' :
-                                          'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                        }`}>
-                          <Clock className="h-3 w-3 shrink-0" />
-                          {daysLeft > 0
-                            ? `Free trial · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining`
-                            : 'Free trial expired — upgrade to keep Premium access'
-                          }
-                        </div>
-                      )}
-
-                      <div className="space-y-1.5">
-                        {(PLAN_FEATURES[plan] || PLAN_FEATURES.free).map(f => (
-                          <div key={f} className="flex items-center gap-2 text-xs text-slate-400">
-                            <Check className="h-3 w-3 text-emerald-400 shrink-0" />{f}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Free trial offer card */}
-                    {showTrialOffer && (
-                      <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-orange-500/5 p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Sparkles className="h-4 w-4 text-amber-400" />
-                          <span className="text-sm font-bold text-amber-300">Free Premium Trial</span>
-                        </div>
-                        <p className="text-xs text-slate-400 mb-3">
-                          Try Premium free for <span className="text-slate-200 font-medium">{trialDays} day{trialDays !== 1 ? 's' : ''}</span> — no card required. One-time offer.
-                        </p>
-                        {trialClaimError && <p className="text-xs text-red-400 mb-2">{trialClaimError}</p>}
-                        <button onClick={handleClaimTrial} disabled={trialClaiming}
-                          className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-60">
-                          {trialClaiming
-                            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Activating…</>
-                            : <><Sparkles className="h-3.5 w-3.5" /> Start Free Trial</>
-                          }
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Tier progression — what user can unlock */}
-                    {plan === 'free' && (
-                      <div className="space-y-2">
-                        <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'pro', current_plan: 'free' }) }}
-                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
-                          <Zap className="h-4 w-4" /> Upgrade to Pro · £4.99/mo
-                        </button>
-                        {!showTrialOffer && (
-                          <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'business', current_plan: 'free' }) }}
-                            className="w-full py-2.5 rounded-xl border border-amber-500/30 text-amber-300 text-sm font-bold hover:bg-amber-500/10 transition-colors flex items-center justify-center gap-2">
-                            <Crown className="h-4 w-4" /> Upgrade to Premium · £14.99/mo
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {plan === 'pro' && (
-                      <div className="space-y-2">
-                        {!showTrialOffer && (
-                          <button onClick={() => { onClose(); onUpgradeRequired?.({ upgrade_to: 'business', current_plan: 'pro' }) }}
-                            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
-                            <Crown className="h-4 w-4" /> Upgrade to Premium · £14.99/mo
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
+              {tab === 'plan' && !isAdmin && (
+                <PlanTabContent
+                  currentPlan={plan}
+                  expiresAt={userPlan.expires_at}
+                  alreadyClaimed={!!liveUser.trial_claimed_at}
+                  trialInfo={trialInfo}
+                  trialClaiming={trialClaiming}
+                  trialClaimError={trialClaimError}
+                  onClaimTrial={handleClaimTrial}
+                  onUpgrade={(to) => { onClose(); onUpgradeRequired?.({ upgrade_to: to, current_plan: plan }) }}
+                />
+              )}
 
             </motion.div>
           </AnimatePresence>
