@@ -317,3 +317,71 @@ def admin_update_feature_flag(
         db.add(flag)
     db.commit()
     return {"plan": plan, "feature_key": feature_key, "enabled": req.enabled, "limit_value": req.limit_value}
+
+
+# ── Trial & Billing settings ───────────────────────────────────────────────────
+
+from database import AppSettings as AppSettingsModel
+from schemas import AppSettingsResponse, AppSettingsUpdate
+from datetime import datetime as dt
+
+
+def _get_or_create_settings(db: Session) -> AppSettingsModel:
+    s = db.query(AppSettingsModel).first()
+    if not s:
+        s = AppSettingsModel()
+        db.add(s)
+        db.commit()
+        db.refresh(s)
+    return s
+
+
+@router.get("/admin/app-settings", response_model=AppSettingsResponse)
+def get_app_settings(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    return _get_or_create_settings(db)
+
+
+@router.put("/admin/app-settings", response_model=AppSettingsResponse)
+def update_app_settings(
+    req: AppSettingsUpdate,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    s = _get_or_create_settings(db)
+    if req.personal_trial_active is not None:
+        s.personal_trial_active = req.personal_trial_active
+    if req.personal_trial_days is not None:
+        s.personal_trial_days = max(1, req.personal_trial_days)
+    if req.work_trial_active is not None:
+        s.work_trial_active = req.work_trial_active
+    if req.work_trial_days is not None:
+        s.work_trial_days = max(1, req.work_trial_days)
+    s.updated_at = dt.utcnow()
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@router.get("/admin/trial-stats")
+def get_trial_stats(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    from database import Organisation
+    _require_admin(current_user_id, db)
+    s = _get_or_create_settings(db)
+    personal_claims = db.query(User).filter(User.trial_claimed_at.isnot(None)).count()
+    work_claims = db.query(Organisation).filter(Organisation.work_trial_claimed_at.isnot(None)).count()
+    return {
+        "personal_trial_active": s.personal_trial_active,
+        "personal_trial_days": s.personal_trial_days,
+        "personal_claims_total": personal_claims,
+        "work_trial_active": s.work_trial_active,
+        "work_trial_days": s.work_trial_days,
+        "work_claims_total": work_claims,
+    }

@@ -883,3 +883,107 @@ def reimburse_report(
     report.updated_at = datetime.utcnow()
     db.commit()
     return _fmt_report(report)
+
+
+# ── Employee activation / deactivation ────────────────────────────────────────
+
+class OrgMemberStatusRequest(BaseModel):
+    status: str  # 'active' | 'inactive'
+
+
+@router.put("/my/org/members/{user_id}/status")
+def org_set_member_status(
+    user_id: int,
+    body: OrgMemberStatusRequest,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    admin = _require_org_admin(uid, db)
+    if user_id == uid:
+        raise HTTPException(status_code=400, detail="You cannot change your own status")
+    if body.status not in ("active", "inactive"):
+        raise HTTPException(status_code=400, detail="Status must be 'active' or 'inactive'")
+    user = db.query(User).filter(
+        User.id == user_id,
+        User.organisation_id == admin.organisation_id,
+    ).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Member not found in your organisation")
+    user.org_status = body.status
+    db.commit()
+    org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
+    return _fmt_member(user, org)
+
+
+# ── Work trial claim (org-level, by org admin) ────────────────────────────────
+
+@router.post("/my/org/claim-trial")
+def org_claim_trial(
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    from database import AppSettings
+    admin = _require_org_admin(uid, db)
+    org = db.query(Organisation).filter(Organisation.id == admin.organisation_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    if org.work_trial_claimed_at:
+        raise HTTPException(status_code=400, detail="Trial already claimed for this organisation")
+    settings = db.query(AppSettings).first()
+    if not settings or not settings.work_trial_active:
+        raise HTTPException(status_code=400, detail="Work trial offer is not currently available")
+    org.work_trial_claimed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(org)
+    trial_days = settings.work_trial_days if settings else 14
+    return {
+        "message": "Work trial activated",
+        "claimed_at": org.work_trial_claimed_at.isoformat(),
+        "trial_days": trial_days,
+        "expires_at": (org.work_trial_claimed_at.replace(
+            day=org.work_trial_claimed_at.day
+        )).isoformat(),
+    }
+
+
+# ── Personal trial claim ───────────────────────────────────────────────────────
+
+@router.post("/users/{user_id}/claim-trial")
+def user_claim_trial(
+    user_id: int,
+    uid: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    from database import AppSettings
+    if uid != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.trial_claimed_at:
+        raise HTTPException(status_code=400, detail="Free trial already claimed")
+    settings = db.query(AppSettings).first()
+    if not settings or not settings.personal_trial_active:
+        raise HTTPException(status_code=400, detail="Free trial offer is not currently available")
+    user.trial_claimed_at = datetime.utcnow()
+    # Upgrade to premium for the trial period
+    from database import Subscription as SubscriptionModel
+    from datetime import timedelta
+    trial_days = settings.personal_trial_days
+    expires = datetime.utcnow() + timedelta(days=trial_days)
+    sub = db.query(SubscriptionModel).filter(SubscriptionModel.user_id == user_id).first()
+    if sub:
+        sub.plan = "business"
+        sub.is_active = True
+        sub.expires_at = expires
+    else:
+        sub = SubscriptionModel(user_id=user_id, plan="business", is_active=True, expires_at=expires)
+        db.add(sub)
+    db.commit()
+    db.refresh(user)
+    from schemas import UserResponse
+    return {
+        "user": UserResponse.model_validate(user),
+        "trial_days": trial_days,
+        "expires_at": expires.isoformat(),
+    }

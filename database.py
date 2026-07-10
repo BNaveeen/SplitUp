@@ -48,13 +48,28 @@ group_members = Table(
     Column("is_active", Boolean, default=True),
 )
 
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id                          = Column(Integer, primary_key=True, index=True)
+    # Personal trial config
+    personal_trial_active       = Column(Boolean, default=True)
+    personal_trial_days         = Column(Integer, default=30)
+    # Work / org trial config
+    work_trial_active           = Column(Boolean, default=True)
+    work_trial_days             = Column(Integer, default=14)
+    updated_at                  = Column(DateTime, default=datetime.utcnow)
+
+
 class Organisation(Base):
     __tablename__ = "organisations"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    name       = Column(String, nullable=False, index=True)
-    domain     = Column(String, nullable=True)   # e.g. "acme.com" — optional
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id                   = Column(Integer, primary_key=True, index=True)
+    name                 = Column(String, nullable=False, index=True)
+    domain               = Column(String, nullable=True)   # e.g. "acme.com"
+    created_at           = Column(DateTime, default=datetime.utcnow)
+    # Work trial
+    work_trial_claimed_at = Column(DateTime, nullable=True)
 
     departments = relationship("Department", back_populates="organisation", cascade="all, delete-orphan")
 
@@ -85,6 +100,7 @@ class User(Base):
     manager_id      = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     employee_id     = Column(String, nullable=True)
     org_role        = Column(String(20), nullable=True)  # null | 'member' | 'admin'
+    org_status      = Column(String(20), nullable=True)  # null | 'active' | 'inactive'
     job_title       = Column(String(100), nullable=True)
     title           = Column(String(10), nullable=True)  # Mr / Mrs / Ms / Dr / Prof / Rev
     # Linked secondary emails (each verified independently via OTP)
@@ -92,6 +108,8 @@ class User(Base):
     personal_email_verified = Column(Boolean, default=False)
     work_email              = Column(String, nullable=True, unique=True, index=True)
     work_email_verified     = Column(Boolean, default=False)
+    # Personal free-trial tracking
+    trial_claimed_at        = Column(DateTime, nullable=True)
 
     groups        = relationship("Group", secondary=group_members, back_populates="members")
     expenses_paid = relationship("Expense", foreign_keys="[Expense.payer_id]", back_populates="payer")

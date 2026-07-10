@@ -189,6 +189,15 @@ export const fetchAllUserBalances = (userId) =>
 export const updateUser = (userId, name, title) =>
   apiFetch(`/users/${userId}`, { method: 'PUT', body: JSON.stringify({ name, title: title || null }) });
 
+export const linkEmail = (userId, emailType, email) =>
+  apiFetch(`/users/${userId}/link-email`, { method: 'POST', body: JSON.stringify({ email_type: emailType, email }) });
+
+export const verifyLinkedEmail = (userId, emailType, email, otp) =>
+  apiFetch(`/users/${userId}/verify-linked-email`, { method: 'POST', body: JSON.stringify({ email_type: emailType, email, otp }) });
+
+export const unlinkEmail = (userId, emailType) =>
+  apiFetch(`/users/${userId}/unlink-email`, { method: 'DELETE', body: JSON.stringify({ email_type: emailType }) });
+
 // ── Notifications ─────────────────────────────────────────────────────────────
 
 export const fetchNotifications = (userId) =>
@@ -432,3 +441,20 @@ export const getWsUrl = (userId) => {
   const base = _pool ? _pool.url(k) : PROD_BACKENDS[0]
   return `${base.replace(/^https/, 'wss').replace(/^http/, 'ws')}/ws/${userId}${qs}`
 }
+
+// ── Org member status (HR deactivate/reactivate) ─────────────────────────────
+export const setOrgMemberStatus = (userId, status) =>
+  apiFetch(`/my/org/members/${userId}/status`, { method: 'PUT', body: JSON.stringify({ status }) })
+
+// ── Trial claims ──────────────────────────────────────────────────────────────
+export const claimPersonalTrial = (userId) =>
+  apiFetch(`/users/${userId}/claim-trial`, { method: 'POST' })
+
+export const claimOrgTrial = () =>
+  apiFetch('/my/org/claim-trial', { method: 'POST' })
+
+// ── App settings (admin) ──────────────────────────────────────────────────────
+export const fetchAppSettings = () => apiFetch('/admin/app-settings')
+export const updateAppSettings = (data) =>
+  apiFetch('/admin/app-settings', { method: 'PUT', body: JSON.stringify(data) })
+export const fetchTrialStats = () => apiFetch('/admin/trial-stats')

@@ -104,6 +104,18 @@ def login_user(request: Request, user: UserLogin, db: Session = Depends(get_db))
     if not db_user.is_verified:
         raise HTTPException(status_code=403,
                             detail="Email not verified. Check your inbox for the verification code.")
+
+    # Block login via work email if the org account is deactivated
+    used_work_email = (
+        db_user.work_email and
+        db_user.work_email.lower() == login_email
+    )
+    if used_work_email and db_user.org_status == "inactive":
+        raise HTTPException(
+            status_code=403,
+            detail="WORK_ACCOUNT_INACTIVE"
+        )
+
     token = create_access_token(db_user.id)
     return TokenResponse(access_token=token, user=UserResponse.model_validate(db_user))
 

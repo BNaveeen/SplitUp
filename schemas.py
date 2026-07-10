@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, field_validator
 
@@ -36,7 +37,8 @@ class UserResponse(BaseModel):
     department_id: Optional[int] = None
     manager_id: Optional[int] = None
     employee_id: Optional[str] = None
-    org_role: Optional[str] = None  # null | 'member' | 'admin'
+    org_role: Optional[str] = None
+    org_status: Optional[str] = None   # null | 'active' | 'inactive'
     job_title: Optional[str] = None
     title: Optional[str] = None
     personal_email: Optional[str] = None
@@ -44,9 +46,27 @@ class UserResponse(BaseModel):
     work_email: Optional[str] = None
     work_email_verified: bool = False
     organisation_domain: Optional[str] = None
+    trial_claimed_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class AppSettingsResponse(BaseModel):
+    personal_trial_active: bool = True
+    personal_trial_days: int = 30
+    work_trial_active: bool = True
+    work_trial_days: int = 14
+
+    class Config:
+        from_attributes = True
+
+
+class AppSettingsUpdate(BaseModel):
+    personal_trial_active: Optional[bool] = None
+    personal_trial_days: Optional[int] = None
+    work_trial_active: Optional[bool] = None
+    work_trial_days: Optional[int] = None
 
 
 class TokenResponse(BaseModel):
