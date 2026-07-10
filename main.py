@@ -195,9 +195,9 @@ async def startup_event():
         "ALTER TABLE users ADD COLUMN work_email_verified BOOLEAN DEFAULT FALSE",
         # Org membership status + personal trial
         "ALTER TABLE users ADD COLUMN org_status TEXT DEFAULT 'active'",
-        "ALTER TABLE users ADD COLUMN trial_claimed_at DATETIME",
+        f"ALTER TABLE users ADD COLUMN trial_claimed_at {ts_type}",
         # Org work-trial
-        "ALTER TABLE organisations ADD COLUMN work_trial_claimed_at DATETIME",
+        f"ALTER TABLE organisations ADD COLUMN work_trial_claimed_at {ts_type}",
     ]:
         mig_db = SessionLocal()
         try:
