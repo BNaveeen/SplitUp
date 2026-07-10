@@ -5,10 +5,10 @@ import { execSync } from 'child_process'
 function gitInfo() {
   try {
     const hash = execSync('git rev-parse --short HEAD').toString().trim()
-    const date = execSync('git log -1 --format=%cd --date=short').toString().trim()
+    const date = execSync('git log -1 --format=%cI').toString().trim()
     return { hash, date }
   } catch {
-    return { hash: 'dev', date: new Date().toISOString().slice(0, 10) }
+    return { hash: 'dev', date: new Date().toISOString() }
   }
 }
 
