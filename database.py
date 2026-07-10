@@ -101,6 +101,10 @@ class User(Base):
     department    = relationship("Department", foreign_keys=[department_id])
     manager       = relationship("User", foreign_keys=[manager_id], remote_side="User.id")
 
+    @property
+    def organisation_domain(self):
+        return self.organisation.domain if self.organisation else None
+
 class Group(Base):
     __tablename__ = "groups"
 

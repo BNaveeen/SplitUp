@@ -302,6 +302,16 @@ def link_email(
     if new_email == user.email.lower():
         raise HTTPException(400, "That is already your primary login email")
 
+    # Work email: user must belong to an org and the email domain must match
+    if body.email_type == "work":
+        if not user.organisation_id:
+            raise HTTPException(400, "You must belong to a company to add a work email")
+        org_domain = user.organisation_domain
+        if org_domain:
+            email_domain = new_email.split("@")[-1] if "@" in new_email else ""
+            if email_domain != org_domain.lower().lstrip("@"):
+                raise HTTPException(400, f"Work email must use your company domain (@{org_domain.lstrip('@')})")
+
     # Email must not be taken by any other user (primary or linked)
     taken = db.query(User).filter(
         User.id != user_id,

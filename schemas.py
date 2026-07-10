@@ -43,6 +43,7 @@ class UserResponse(BaseModel):
     personal_email_verified: bool = False
     work_email: Optional[str] = None
     work_email_verified: bool = False
+    organisation_domain: Optional[str] = None
 
     class Config:
         from_attributes = True
