@@ -1014,9 +1014,10 @@ function LogoutModal({ onConfirm, onCancel }) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
-  const [activeTab, setActiveTab]   = useState('groups')
   const userHasPersonal = hasPersonalEmail(user)
-  const [workMode, setWorkMode]     = useState(user.organisation_id && !userHasPersonal)   // default work if org-only user
+  const isOrgOnly = !!(user.organisation_id && !userHasPersonal)
+  const [activeTab, setActiveTab]   = useState(isOrgOnly ? 'work' : 'groups')
+  const [workMode, setWorkMode]     = useState(isOrgOnly)
   const [groups, setGroups]         = useState([])
   const [users, setUsers]           = useState([])
   const [selectedGroup, setGroup]   = useState(null)  // GroupDetailView
@@ -5453,183 +5454,196 @@ function OrgCreateMemberModal({ depts, members, onClose, onCreated }) {
 
 // ── Work Tab ──────────────────────────────────────────────────────────────────
 function WorkTab({ currentUser }) {
-  const [orgInfo, setOrgInfo]       = useState(null)
-  const [reports, setReports]       = useState([])
-  const [approvals, setApprovals]   = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [activeSection, setSection] = useState('reports') // 'reports' | 'approvals' | 'org'
-  const [showCreateModal, setShowCreate]   = useState(false)
-  const [openReport, setOpenReport]        = useState(null)
-  const [openApproval, setOpenApproval]    = useState(null) // report open in full approval review
-  const [reviewModal, setReviewModal]      = useState(null)
+  const [orgInfo, setOrgInfo]     = useState(null)
+  const [reports, setReports]     = useState([])
+  const [approvals, setApprovals] = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [section, setSection]     = useState('reports')
+  const [showCreate, setShowCreate]       = useState(false)
+  const [openReport, setOpenReport]       = useState(null)
+  const [openApproval, setOpenApproval]   = useState(null)
 
-  const isManager = orgInfo && orgInfo.direct_reports && orgInfo.direct_reports.length > 0
+  const isManager = (orgInfo?.direct_reports?.length ?? 0) > 0
 
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      const [org, reps, apprs] = await Promise.all([
-        fetchMyOrg(),
-        fetchMyReports(),
-        fetchMyApprovals(),
-      ])
-      setOrgInfo(org)
-      setReports(reps)
-      setApprovals(apprs)
-    } finally {
-      setLoading(false)
-    }
+      const [org, reps, apprs] = await Promise.all([fetchMyOrg(), fetchMyReports(), fetchMyApprovals()])
+      setOrgInfo(org); setReports(reps); setApprovals(apprs)
+    } finally { setLoading(false) }
   }, [])
 
   useEffect(() => { reload() }, [reload])
-
-  const STATUS_META = {
-    draft:       { label: 'Draft',       color: 'text-slate-400 bg-slate-800 border-slate-700' },
-    submitted:   { label: 'Submitted',   color: 'text-blue-300 bg-blue-500/10 border-blue-500/20' },
-    approved:    { label: 'Approved',    color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-    rejected:    { label: 'Rejected',    color: 'text-red-300 bg-red-500/10 border-red-500/20' },
-    reimbursed:  { label: 'Reimbursed', color: 'text-purple-300 bg-purple-500/10 border-purple-500/20' },
-  }
-
-  const handleSubmit = async (reportId) => {
-    try {
-      await submitReport(reportId)
-      await reload()
-    } catch (e) { alert(e.message) }
-  }
-
-  const handleDelete = async (reportId) => {
-    if (!confirm('Delete this report?')) return
-    try {
-      await deleteReport(reportId)
-      setSelectedReport(null)
-      await reload()
-    } catch (e) { alert(e.message) }
-  }
 
   const handleReview = async (reportId, action, notes) => {
     try {
       if (action === 'approve')    await approveReport(reportId, notes)
       else if (action === 'reject') await rejectReport(reportId, notes)
       else if (action === 'reimburse') await reimburseReport(reportId)
-      setReviewModal(null)
       await reload()
     } catch (e) { alert(e.message) }
   }
 
+  const STATUS = {
+    draft:      { label: 'Draft',      badge: 'text-slate-400 bg-slate-800 border-slate-600',          bar: 'bg-slate-600' },
+    submitted:  { label: 'Submitted',  badge: 'text-blue-300 bg-blue-500/10 border-blue-500/20',       bar: 'bg-blue-500' },
+    approved:   { label: 'Approved',   badge: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20', bar: 'bg-emerald-500' },
+    rejected:   { label: 'Rejected',   badge: 'text-red-300 bg-red-500/10 border-red-500/20',          bar: 'bg-red-500' },
+    reimbursed: { label: 'Reimbursed', badge: 'text-purple-300 bg-purple-500/10 border-purple-500/20', bar: 'bg-purple-500' },
+  }
+
+  // Derived stats
+  const totalClaimed  = reports.reduce((s, r) => s + Number(r.total_amount || 0), 0)
+  const pendingMine   = reports.filter(r => r.status === 'submitted').length
+  const currency      = reports[0]?.currency || 'GBP'
+
   if (loading) return (
     <div className="flex justify-center items-center py-24">
-      <Loader2 className="animate-spin h-6 w-6 text-indigo-400" />
+      <Loader2 className="animate-spin h-6 w-6 text-amber-400" />
     </div>
   )
 
   if (!orgInfo) return (
     <div className="flex flex-col items-center justify-center py-24 text-center px-8">
       <Building2 className="h-14 w-14 text-slate-700 mb-4" />
-      <p className="font-semibold text-slate-300 text-lg">Not in an organisation</p>
-      <p className="text-sm text-slate-500 mt-2">Ask your admin to add you to an organisation to access the Work features.</p>
+      <p className="font-bold text-slate-300 text-lg mb-1">Not in an organisation</p>
+      <p className="text-sm text-slate-500">Ask your admin to add you to an organisation to use Work features.</p>
     </div>
   )
 
+  const { organisation: org, department: dept, manager, direct_reports, teammates, org_role, employee_id } = orgInfo
+  const displayName = currentUser.title ? `${currentUser.title} ${currentUser.name}` : currentUser.name
+
   return (
-    <div className="pt-4 pb-4 space-y-4">
-      {/* My work profile */}
-      <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 flex items-center gap-4">
-        <div className={`h-12 w-12 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(currentUser.id)} flex items-center justify-center text-lg font-bold text-white`}>
-          {currentUser.name.charAt(0).toUpperCase()}
+    <div className="pt-3 pb-6 space-y-4">
+
+      {/* ── Identity card ── */}
+      <div className="rounded-2xl border border-slate-700/50 overflow-hidden">
+        {/* Amber accent bar */}
+        <div className="h-1 w-full bg-gradient-to-r from-amber-500 to-orange-500" />
+        <div className="bg-slate-800/70 p-4">
+          <div className="flex items-start gap-3">
+            <div className={`h-12 w-12 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(currentUser.id)} flex items-center justify-center text-lg font-bold text-white`}>
+              {currentUser.name.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-bold text-white truncate">{displayName}</p>
+                  {currentUser.job_title && <p className="text-xs text-amber-400 truncate">{currentUser.job_title}</p>}
+                  <p className="text-xs text-slate-500 truncate mt-0.5">{dept?.name || 'No department'} · {org.name}</p>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  {employee_id && (
+                    <span className="text-[10px] font-mono text-slate-500 bg-slate-900/60 border border-slate-700 px-1.5 py-0.5 rounded-md">{employee_id}</span>
+                  )}
+                  {org_role === 'admin' && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-violet-300 bg-violet-500/10 border-violet-500/25">Admin</span>
+                  )}
+                  {isManager && org_role !== 'admin' && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-amber-300 bg-amber-500/10 border-amber-500/25">Manager</span>
+                  )}
+                </div>
+              </div>
+              {manager && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <div className={`h-4 w-4 rounded-full bg-gradient-to-br ${avatarColor(manager.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
+                    {manager.name.charAt(0)}
+                  </div>
+                  <p className="text-[11px] text-slate-500">Reports to <span className="text-slate-400 font-medium">{manager.name}</span></p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="font-bold text-white truncate">
-            {currentUser.title ? `${currentUser.title} ${currentUser.name}` : currentUser.name}
-          </p>
-          {currentUser.job_title && (
-            <p className="text-xs text-indigo-300 truncate">{currentUser.job_title}</p>
-          )}
-          <p className="text-xs text-slate-500 truncate">{currentUser.email}</p>
-        </div>
-        {orgInfo.org_role === 'admin' && (
-          <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border text-violet-300 bg-violet-500/10 border-violet-500/25">Admin</span>
-        )}
       </div>
 
-      {/* Org header */}
-      <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-2xl p-4 flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0">
-          <Building2 className="h-5 w-5 text-white" />
-        </div>
-        <div className="min-w-0">
-          <p className="font-bold text-white truncate">{orgInfo.organisation.name}</p>
-          <p className="text-xs text-slate-400 truncate">
-            {orgInfo.department ? orgInfo.department.name : 'No department'}
-            {orgInfo.manager ? ` · Manager: ${orgInfo.manager.name}` : ''}
-          </p>
-        </div>
-        {orgInfo.employee_id && (
-          <span className="ml-auto shrink-0 text-[10px] font-mono text-slate-500 bg-slate-800 px-2 py-1 rounded-lg">{orgInfo.employee_id}</span>
-        )}
-      </div>
-
-      {/* Section tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-0.5">
+      {/* ── Stats strip ── */}
+      <div className="grid grid-cols-3 gap-2">
         {[
-          { id: 'reports',   label: 'My Reports',  icon: FileText },
+          { label: 'Reports',  value: reports.length,            sub: 'total filed'          },
+          { label: currency,   value: totalClaimed.toFixed(0),   sub: 'total claimed', prefix: '£' },
+          isManager
+            ? { label: 'Approvals', value: approvals.length, sub: 'awaiting you' }
+            : { label: 'Team',      value: teammates.length,     sub: 'colleagues'           },
+        ].map(s => (
+          <div key={s.label} className="bg-slate-800/60 border border-slate-700/40 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-white">{s.prefix || ''}{s.value}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Section tabs ── */}
+      <div className="flex gap-1.5">
+        {[
+          { id: 'reports',   label: 'Reports',    icon: FileText },
           ...(isManager ? [{ id: 'approvals', label: `Approvals${approvals.length ? ` (${approvals.length})` : ''}`, icon: ClipboardList }] : []),
-          { id: 'org',       label: 'Team',        icon: Users },
+          { id: 'team',      label: 'Team',       icon: Users },
         ].map(s => (
           <button key={s.id} onClick={() => setSection(s.id)}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-              activeSection === s.id
-                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-transparent'
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
+              section === s.id
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border-transparent'
             }`}>
-            <s.icon className="h-3.5 w-3.5" />
-            {s.label}
+            <s.icon className="h-3.5 w-3.5" />{s.label}
           </button>
         ))}
       </div>
 
-      {/* My Reports */}
-      {activeSection === 'reports' && (
+      {/* ── My Reports ── */}
+      {section === 'reports' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Expense Reports</p>
             <button onClick={() => setShowCreate(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-indigo-500 hover:bg-indigo-600 rounded-xl transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl transition-colors">
               <Plus className="h-3.5 w-3.5" /> New Report
             </button>
           </div>
 
           {reports.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center">
-              <FileText className="h-10 w-10 text-slate-700 mb-3" />
-              <p className="text-slate-400 font-medium">No expense reports yet</p>
-              <p className="text-xs text-slate-600 mt-1">Create a report and add expense line items</p>
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="h-14 w-14 rounded-2xl bg-slate-800/80 border border-slate-700/50 flex items-center justify-center mb-3">
+                <FileText className="h-7 w-7 text-slate-600" />
+              </div>
+              <p className="font-semibold text-slate-300 mb-1">No expense reports yet</p>
+              <p className="text-xs text-slate-600 mb-4">Create a report to submit expenses to your manager</p>
+              <button onClick={() => setShowCreate(true)}
+                className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-xl transition-colors">
+                <Plus className="h-3.5 w-3.5" /> Create First Report
+              </button>
             </div>
           ) : (
             reports.map(r => {
-              const meta = STATUS_META[r.status] || STATUS_META.draft
+              const s = STATUS[r.status] || STATUS.draft
+              const dateStr = r.period_start
+                ? new Date(r.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
+                : new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
               return (
                 <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-                  className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4 cursor-pointer hover:border-indigo-500/30 hover:bg-slate-800/80 transition-all active:scale-[0.99]"
-                  onClick={() => setOpenReport(r)}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-slate-100 truncate">{r.title}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {r.expenses.length} item{r.expenses.length !== 1 ? 's' : ''} · {r.currency} {Number(r.total_amount).toFixed(2)}
-                        {r.period_start && ` · ${new Date(r.period_start).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}`}
+                  onClick={() => setOpenReport(r)}
+                  className="group bg-slate-800/60 border border-slate-700/40 rounded-2xl overflow-hidden cursor-pointer hover:border-amber-500/30 hover:bg-slate-800/80 transition-all active:scale-[0.99]">
+                  {/* Status bar at top */}
+                  <div className={`h-0.5 w-full ${s.bar}`} />
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-slate-100 truncate">{r.title}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{dateStr} · {r.expenses.length} item{r.expenses.length !== 1 ? 's' : ''}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-base font-bold text-white">{r.currency} {Number(r.total_amount).toFixed(2)}</p>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${s.badge}`}>{s.label}</span>
+                      </div>
+                    </div>
+                    {r.review_notes && (
+                      <p className="mt-2.5 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-1.5">
+                        {r.review_notes}
                       </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>{meta.label}</span>
-                      <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
-                    </div>
+                    )}
                   </div>
-                  {r.review_notes && (
-                    <p className="mt-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5 truncate">
-                      {r.review_notes}
-                    </p>
-                  )}
                 </motion.div>
               )
             })
@@ -5637,79 +5651,93 @@ function WorkTab({ currentUser }) {
         </div>
       )}
 
-      {/* Approvals */}
-      {activeSection === 'approvals' && (
+      {/* ── Approvals ── */}
+      {section === 'approvals' && (
         <div className="space-y-3">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Approvals</p>
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            Pending Approvals {approvals.length > 0 && <span className="text-amber-400 ml-1">({approvals.length})</span>}
+          </p>
           {approvals.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center">
-              <Inbox className="h-10 w-10 text-slate-700 mb-3" />
-              <p className="text-slate-400 font-medium">All clear</p>
-              <p className="text-xs text-slate-600 mt-1">No reports waiting for your approval</p>
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="h-14 w-14 rounded-2xl bg-slate-800/80 border border-slate-700/50 flex items-center justify-center mb-3">
+                <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+              </div>
+              <p className="font-semibold text-slate-300 mb-1">All caught up</p>
+              <p className="text-xs text-slate-600">No reports waiting for your approval</p>
             </div>
           ) : (
             approvals.map(r => (
               <motion.div key={r.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
                 onClick={() => setOpenApproval(r)}
-                className="bg-slate-800/60 border border-blue-500/20 rounded-2xl p-4 cursor-pointer hover:border-blue-500/40 hover:bg-slate-800/80 transition-all active:scale-[0.99]">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-100 truncate">{r.title}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {r.submitted_by_name} · {r.expenses.length} item{r.expenses.length !== 1 ? 's' : ''} · {r.currency} {Number(r.total_amount).toFixed(2)}
-                    </p>
+                className="group bg-slate-800/60 border border-blue-500/20 rounded-2xl overflow-hidden cursor-pointer hover:border-blue-500/40 hover:bg-slate-800/80 transition-all active:scale-[0.99]">
+                <div className="h-0.5 w-full bg-blue-500" />
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-100 truncate">{r.title}</p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <div className={`h-4 w-4 rounded-full bg-gradient-to-br ${avatarColor(r.submitted_by_id || 0)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
+                          {(r.submitted_by_name || '?').charAt(0)}
+                        </div>
+                        <p className="text-xs text-slate-500">{r.submitted_by_name} · {r.expenses.length} item{r.expenses.length !== 1 ? 's' : ''}</p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-base font-bold text-white">{r.currency} {Number(r.total_amount).toFixed(2)}</p>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-blue-300 bg-blue-500/10 border-blue-500/20">Review</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border text-blue-300 bg-blue-500/10 border-blue-500/20">Submitted</span>
-                    <ChevronRight className="h-4 w-4 text-slate-500" />
-                  </div>
+                  {r.expenses.some(e => e.receipt_image) && (
+                    <div className="flex gap-1.5 mt-3 overflow-x-auto pb-0.5">
+                      {r.expenses.filter(e => e.receipt_image).slice(0, 4).map(e => (
+                        <img key={e.id} src={e.receipt_image} alt=""
+                          className="h-10 w-10 shrink-0 object-cover rounded-lg border border-slate-700/50" />
+                      ))}
+                      {r.expenses.filter(e => e.receipt_image).length > 4 && (
+                        <div className="h-10 w-10 shrink-0 rounded-lg bg-slate-700/50 border border-slate-700/50 flex items-center justify-center text-[10px] text-slate-500">
+                          +{r.expenses.filter(e => e.receipt_image).length - 4}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {/* Receipt thumbnails preview */}
-                {r.expenses.some(e => e.receipt_image) && (
-                  <div className="flex gap-1.5 mt-3 overflow-x-auto pb-0.5">
-                    {r.expenses.filter(e => e.receipt_image).map(e => (
-                      <img key={e.id} src={e.receipt_image} alt="receipt"
-                        className="h-12 w-12 shrink-0 object-cover rounded-lg border border-slate-700/50" />
-                    ))}
-                    <div className="h-12 flex items-center px-2 text-xs text-slate-500">tap to review</div>
-                  </div>
-                )}
               </motion.div>
             ))
           )}
         </div>
       )}
 
-      {/* Team / Org info */}
-      {activeSection === 'org' && (
+      {/* ── Team ── */}
+      {section === 'team' && (
         <div className="space-y-3">
-          {orgInfo.manager && (
-            <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4">
+          {manager && (
+            <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Your Manager</p>
-              <div className="flex items-center gap-3">
-                <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(orgInfo.manager.id)} flex items-center justify-center text-sm font-bold text-white`}>
-                  {orgInfo.manager.name.charAt(0)}
+              <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3 flex items-center gap-3">
+                <div className={`h-10 w-10 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(manager.id)} flex items-center justify-center text-sm font-bold text-white`}>
+                  {manager.name.charAt(0)}
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-100">{orgInfo.manager.name}</p>
-                  <p className="text-xs text-slate-500">{orgInfo.manager.email}</p>
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-100 text-sm">{manager.name}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{manager.email}</p>
                 </div>
+                <Shield className="h-4 w-4 text-slate-600 shrink-0 ml-auto" />
               </div>
             </div>
           )}
 
-          {orgInfo.direct_reports && orgInfo.direct_reports.length > 0 && (
-            <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Direct Reports</p>
-              <div className="space-y-2">
-                {orgInfo.direct_reports.map(r => (
-                  <div key={r.id} className="flex items-center gap-3">
-                    <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(r.id)} flex items-center justify-center text-xs font-bold text-white`}>
+          {direct_reports?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Direct Reports ({direct_reports.length})</p>
+              <div className="grid grid-cols-2 gap-2">
+                {direct_reports.map(r => (
+                  <div key={r.id} className="bg-slate-800/60 border border-amber-500/15 rounded-xl p-3 flex items-center gap-2">
+                    <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(r.id)} flex items-center justify-center text-xs font-bold text-white`}>
                       {r.name.charAt(0)}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-slate-200">{r.name}</p>
-                      <p className="text-[11px] text-slate-500">{r.email}</p>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-200 truncate">{r.name}</p>
+                      <p className="text-[10px] text-slate-600 truncate">{r.email}</p>
                     </div>
                   </div>
                 ))}
@@ -5717,20 +5745,23 @@ function WorkTab({ currentUser }) {
             </div>
           )}
 
-          <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl p-4">
+          <div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              Teammates ({orgInfo.teammates.length})
+              Team — {org.name} {teammates.length > 0 && `(${teammates.length})`}
             </p>
-            {orgInfo.teammates.length === 0 ? (
-              <p className="text-xs text-slate-600">No other members yet</p>
+            {teammates.length === 0 ? (
+              <p className="text-xs text-slate-600 py-4 text-center">No other team members yet</p>
             ) : (
-              <div className="space-y-2">
-                {orgInfo.teammates.map(t => (
-                  <div key={t.id} className="flex items-center gap-3">
-                    <div className={`h-8 w-8 rounded-full bg-gradient-to-br ${avatarColor(t.id)} flex items-center justify-center text-xs font-bold text-white`}>
+              <div className="grid grid-cols-2 gap-2">
+                {teammates.map(t => (
+                  <div key={t.id} className="bg-slate-800/60 border border-slate-700/40 rounded-xl p-3 flex items-center gap-2">
+                    <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(t.id)} flex items-center justify-center text-xs font-bold text-white`}>
                       {t.name.charAt(0)}
                     </div>
-                    <p className="text-sm text-slate-300">{t.name}</p>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-200 truncate">{t.name}</p>
+                      <p className="text-[10px] text-slate-600 truncate">{t.email}</p>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -5739,52 +5770,26 @@ function WorkTab({ currentUser }) {
         </div>
       )}
 
-      {/* Create Report Modal */}
+      {/* ── Modals ── */}
       <AnimatePresence>
-        {showCreateModal && (
-          <CreateReportModal
-            onClose={() => setShowCreate(false)}
-            onCreated={async (newReport) => {
-              setShowCreate(false)
-              await reload()
-              setOpenReport(newReport)
-            }}
-          />
+        {showCreate && (
+          <CreateReportModal onClose={() => setShowCreate(false)}
+            onCreated={async (r) => { setShowCreate(false); await reload(); setOpenReport(r) }} />
         )}
       </AnimatePresence>
-
-      {/* Report Detail Modal */}
       <AnimatePresence>
         {openReport && (
-          <ReportDetailModal
-            report={openReport}
-            currentUser={currentUser}
-            onClose={async () => { setOpenReport(null); await reload() }}
-          />
+          <ReportDetailModal report={openReport} currentUser={currentUser}
+            onClose={async () => { setOpenReport(null); await reload() }} />
         )}
       </AnimatePresence>
-
-      {/* Approval Review Modal */}
       <AnimatePresence>
         {openApproval && (
-          <ApprovalReviewModal
-            report={openApproval}
+          <ApprovalReviewModal report={openApproval}
             onClose={() => setOpenApproval(null)}
             onApprove={async (notes) => { await handleReview(openApproval.id, 'approve', notes); setOpenApproval(null) }}
             onReject={async (notes)  => { await handleReview(openApproval.id, 'reject',  notes); setOpenApproval(null) }}
             onReimburse={async ()    => { await handleReview(openApproval.id, 'reimburse'); setOpenApproval(null) }}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Review Modal (legacy — kept for any direct calls) */}
-      <AnimatePresence>
-        {reviewModal && (
-          <ReviewModal
-            report={reviewModal.report}
-            action={reviewModal.action}
-            onClose={() => setReviewModal(null)}
-            onSubmit={(notes) => handleReview(reviewModal.report.id, reviewModal.action, notes)}
           />
         )}
       </AnimatePresence>
