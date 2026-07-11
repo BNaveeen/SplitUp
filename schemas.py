@@ -1,12 +1,22 @@
+import re
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, field_validator
+
+_EMAIL_RE = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
 
 
 class UserRegister(BaseModel):
     name: str
     email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def email_format(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v.strip()):
+            raise ValueError("Invalid email address")
+        return v.strip().lower()
 
     @field_validator("password")
     @classmethod
@@ -107,6 +117,20 @@ class ChangePasswordRequest(BaseModel):
 class LinkEmailRequest(BaseModel):
     email_type: str   # 'personal' | 'work'
     email: str
+
+    @field_validator("email")
+    @classmethod
+    def email_format(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v.strip()):
+            raise ValueError("Invalid email address")
+        return v.strip().lower()
+
+    @field_validator("email_type")
+    @classmethod
+    def email_type_valid(cls, v: str) -> str:
+        if v not in ("personal", "work"):
+            raise ValueError("email_type must be 'personal' or 'work'")
+        return v
 
 class VerifyLinkedEmailRequest(BaseModel):
     email_type: str
