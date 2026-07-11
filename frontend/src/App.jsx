@@ -8848,7 +8848,7 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
                         domain={liveUser.organisation_domain}
                         onUpdate={handleEmailUpdate} />
                     )}
-                    {workMode && showPersonalEmailRow && (
+                    {!workMode && showPersonalEmailRow && (
                       <LinkedEmailRow userId={liveUser.id} emailType="personal"
                         currentEmail={liveUser.personal_email} isVerified={liveUser.personal_email_verified}
                         onUpdate={handleEmailUpdate} />
