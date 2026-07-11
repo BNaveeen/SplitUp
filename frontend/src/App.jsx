@@ -536,7 +536,7 @@ export default function App() {
   )
 
   return (
-    <div className="min-h-screen bg-[#1a1a2e] text-slate-100 font-sans overflow-hidden relative">
+    <div className="bg-[#1a1a2e] text-slate-100 font-sans overflow-hidden relative" style={{ height: '100dvh' }}>
       {/* gradient blobs — hidden on mobile to avoid GPU strain */}
       <div className="hidden sm:block fixed top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-indigo-700/15 blur-[80px] pointer-events-none" />
       <div className="hidden sm:block fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-purple-700/15 blur-[80px] pointer-events-none" />
@@ -1229,10 +1229,10 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
   const navAccent = workMode && user.organisation_id ? 'amber' : 'indigo'
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="min-h-screen flex flex-col z-10 relative">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full flex flex-col z-10 relative">
 
       {/* Top nav — always visible */}
-      <nav className={`backdrop-blur-xl border-b sticky top-0 z-50 transition-colors duration-300 ${
+      <nav className={`backdrop-blur-xl border-b shrink-0 z-50 transition-colors duration-300 ${
         workMode && user.organisation_id && !selectedGroup && !showAdmin
           ? 'bg-amber-950/60 border-amber-800/30'
           : 'bg-slate-900/70 border-slate-700/40'
@@ -1461,12 +1461,12 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
 
       {/* Main content — changes per tab / group drill-in / admin */}
       {showAdmin ? (
-        <div className="flex-1 flex min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 flex overflow-hidden">
           <AdminDashboard currentUser={user} onBack={() => setShowAdmin(false)} onWipe={loadData} />
         </div>
       ) : selectedGroup ? (
         <ErrorBoundary>
-          <div className="flex-1 overflow-y-auto pb-20">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             <GroupDetailView
               key={selectedGroup.id}
               group={selectedGroup}
@@ -1485,7 +1485,8 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
           </div>
         </ErrorBoundary>
       ) : (
-        <main className="flex-1 max-w-2xl w-full mx-auto px-4 pb-28">
+        <main className="flex-1 min-h-0 overflow-y-auto">
+          <div className="max-w-2xl w-full mx-auto px-4 pt-2 pb-6">
           {loading ? (
             <div className="flex flex-col justify-center items-center h-64 gap-4">
               <Loader2 className="animate-spin h-8 w-8 text-indigo-500" />
@@ -1524,11 +1525,12 @@ function Dashboard({ user, onLogout, theme = 'dark', onThemeChange }) {
               </motion.div>
             </AnimatePresence>
           )}
+          </div>
         </main>
       )}
 
       {/* Bottom nav — always visible */}
-      <div className={`fixed bottom-0 left-0 right-0 z-50 backdrop-blur-xl border-t transition-colors duration-300 ${
+      <div className={`shrink-0 z-50 backdrop-blur-xl border-t transition-colors duration-300 ${
         workMode && user.organisation_id && !showAdmin
           ? 'bg-amber-950/80 border-amber-800/30'
           : 'bg-slate-900/90 border-slate-700/40'
@@ -4916,10 +4918,10 @@ function MemberEditModal({ member: init, depts, members, currentUserId, onClose,
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm"
+      className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm"
       onClick={onClose}>
-      <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }}
-        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
 
         {/* Header */}
