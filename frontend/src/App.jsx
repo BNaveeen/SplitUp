@@ -5654,46 +5654,68 @@ function OrgChartNode({ member, childrenMap, currentUserId }) {
   const children = (childrenMap[member.id] || []).sort((a, b) => a.name.localeCompare(b.name))
 
   return (
-    <div>
-      <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-colors ${
+    <div className="flex flex-col items-center">
+      {/* ── Node box ── */}
+      <div className={`relative px-2.5 py-2.5 rounded-xl border text-center shadow-md w-[100px] ${
         isMe
-          ? 'bg-amber-500/10 border-amber-500/40'
-          : 'bg-slate-800/60 border-slate-700/40'
+          ? 'bg-amber-500/20 border-amber-500/50 shadow-amber-900/30'
+          : 'bg-indigo-600/20 border-indigo-400/30 shadow-indigo-900/20'
       }`}>
-        <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(member.id)} flex items-center justify-center text-xs font-bold text-white`}>
+        <div className={`h-8 w-8 mx-auto rounded-full bg-gradient-to-br ${avatarColor(member.id)} flex items-center justify-center text-xs font-bold text-white mb-1.5`}>
           {member.name.charAt(0).toUpperCase()}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <p className={`text-sm font-semibold ${isMe ? 'text-amber-300' : 'text-slate-100'}`}>{member.name}</p>
-            {isMe && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 tracking-wide">YOU</span>}
-          </div>
-          {member.job_title
-            ? <p className="text-[10px] text-slate-500 mt-0.5">{member.job_title}</p>
-            : <p className="text-[10px] text-slate-600 mt-0.5">No title</p>
-          }
-        </div>
-        {children.length > 0 && (
-          <div className="shrink-0 flex items-center gap-1 text-[9px] text-slate-500">
-            <Users className="h-3 w-3" />
-            <span>{children.length}</span>
-          </div>
+        <p className={`text-[10px] font-bold leading-tight break-words hyphens-auto ${isMe ? 'text-amber-200' : 'text-slate-100'}`}>
+          {member.name}
+        </p>
+        {member.job_title && (
+          <p className={`text-[8px] mt-1 leading-tight break-words ${isMe ? 'text-amber-400/80' : 'text-indigo-300/70'}`}>
+            {member.job_title}
+          </p>
+        )}
+        {isMe && (
+          <span className="absolute -top-1.5 -right-1.5 text-[6px] font-bold bg-amber-500 text-white px-1 py-0.5 rounded-full leading-none tracking-wide">YOU</span>
         )}
       </div>
+
+      {/* ── Children ── */}
       {children.length > 0 && (
-        <div className="ml-5 mt-1.5 pl-3 border-l-2 border-slate-700/50 space-y-1.5 pb-0.5">
-          {children.map(child => (
-            <OrgChartNode key={child.id} member={child} childrenMap={childrenMap} currentUserId={currentUserId} />
-          ))}
-        </div>
+        <>
+          {/* Vertical stem from this node down to horizontal bar */}
+          <div className="h-5 w-px bg-indigo-400/50" />
+
+          {/* Children row — each child wrapper is px-3 wide, creating the "gap" */}
+          <div className="flex">
+            {children.map((child, i) => {
+              const isFirst = i === 0
+              const isLast  = i === children.length - 1
+              const only    = children.length === 1
+              return (
+                <div key={child.id} className="relative flex flex-col items-center px-3">
+                  {/* Horizontal connector spanning from this child's center to adjacent siblings */}
+                  {!only && (
+                    <div
+                      className="absolute top-0 h-px bg-indigo-400/50"
+                      style={{ left: isFirst ? '50%' : 0, right: isLast ? '50%' : 0 }}
+                    />
+                  )}
+                  {/* Vertical stem from horizontal bar down to child box */}
+                  <div className="h-5 w-px bg-indigo-400/50" />
+                  <OrgChartNode member={child} childrenMap={childrenMap} currentUserId={currentUserId} />
+                </div>
+              )
+            })}
+          </div>
+        </>
       )}
     </div>
   )
 }
 
 function OrgChartView({ orgInfo, currentUser }) {
-  const { teammates, manager } = orgInfo
+  const [zoom, setZoom]   = useState(0.9)
+  const pinchRef          = useRef({ dist: null })
 
+  const { teammates, manager } = orgInfo
   const me = {
     id:         currentUser.id,
     name:       currentUser.name,
@@ -5714,6 +5736,35 @@ function OrgChartView({ orgInfo, currentUser }) {
 
   const hasAnyRelationship = allMembers.some(m => m.manager_id && memberIds.has(m.manager_id))
 
+  const roots = allMembers
+    .filter(m => !m.manager_id || !memberIds.has(m.manager_id))
+    .sort((a, b) => (childrenMap[b.id] || []).length - (childrenMap[a.id] || []).length || a.name.localeCompare(b.name))
+
+  const adjustZoom = delta => setZoom(z => Math.max(0.3, Math.min(2.5, +(z + delta).toFixed(2))))
+
+  const handleWheel = e => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); adjustZoom(-e.deltaY * 0.004) }
+  }
+
+  const handleTouchStart = e => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      pinchRef.current.dist = Math.hypot(dx, dy)
+    }
+  }
+
+  const handleTouchMove = e => {
+    if (e.touches.length === 2 && pinchRef.current.dist != null) {
+      e.preventDefault()
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      const dist = Math.hypot(dx, dy)
+      adjustZoom((dist - pinchRef.current.dist) * 0.005)
+      pinchRef.current.dist = dist
+    }
+  }
+
   if (!hasAnyRelationship) return (
     <div className="flex flex-col items-center justify-center py-12 text-center">
       <Users className="h-10 w-10 text-slate-700 mb-3" />
@@ -5722,19 +5773,46 @@ function OrgChartView({ orgInfo, currentUser }) {
     </div>
   )
 
-  const roots = allMembers
-    .filter(m => !m.manager_id || !memberIds.has(m.manager_id))
-    .sort((a, b) => {
-      const aCh = (childrenMap[a.id] || []).length
-      const bCh = (childrenMap[b.id] || []).length
-      return bCh - aCh || a.name.localeCompare(b.name)
-    })
-
   return (
-    <div className="space-y-2">
-      {roots.map(root => (
-        <OrgChartNode key={root.id} member={root} childrenMap={childrenMap} currentUserId={currentUser.id} />
-      ))}
+    <div className="rounded-2xl border border-slate-700/40 bg-slate-900/50 overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/30 bg-slate-800/60">
+        <div className="flex items-center gap-1.5">
+          <Users className="h-3.5 w-3.5 text-slate-500" />
+          <span className="text-xs text-slate-500">{allMembers.length} members</span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          <button onClick={() => adjustZoom(-0.15)}
+            className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg text-lg font-light transition-colors">−</button>
+          <span className="text-[10px] text-slate-400 w-10 text-center font-mono tabular-nums">{Math.round(zoom * 100)}%</span>
+          <button onClick={() => adjustZoom(0.15)}
+            className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg text-lg font-light transition-colors">+</button>
+          <button onClick={() => setZoom(0.9)}
+            className="text-[9px] text-slate-500 hover:text-slate-200 px-2 py-1 hover:bg-slate-700 rounded-lg transition-colors ml-1">Reset</button>
+        </div>
+      </div>
+
+      {/* Scrollable chart area — zoom via CSS zoom property so scrollbars reflect scaled size */}
+      <div
+        className="overflow-auto"
+        style={{ maxHeight: '62vh', touchAction: 'pan-x pan-y' }}
+        onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={() => { pinchRef.current.dist = null }}
+      >
+        <div className="flex justify-center p-8" style={{ zoom, minWidth: 'max-content' }}>
+          {roots.length === 1 ? (
+            <OrgChartNode member={roots[0]} childrenMap={childrenMap} currentUserId={currentUser.id} />
+          ) : (
+            <div className="flex items-start gap-6">
+              {roots.map(root => (
+                <OrgChartNode key={root.id} member={root} childrenMap={childrenMap} currentUserId={currentUser.id} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
