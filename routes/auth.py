@@ -91,14 +91,16 @@ def resend_verification(request: Request, body: ForgotPasswordRequest, db: Sessi
 @limiter.limit("20/minute")
 def login_user(request: Request, user: UserLogin, db: Session = Depends(get_db)):
     login_email = user.email.strip().lower()
-    # Allow login with primary email OR any verified linked email
-    db_user = db.query(User).filter(
-        or_(
-            User.email.ilike(login_email),
-            and_(User.personal_email.isnot(None), User.personal_email.ilike(login_email), User.personal_email_verified == True),
-            and_(User.work_email.isnot(None), User.work_email.ilike(login_email), User.work_email_verified == True),
-        )
-    ).first()
+    # Primary email takes strict priority — prevents interlinked accounts from colliding
+    db_user = db.query(User).filter(User.email.ilike(login_email)).first()
+    if not db_user:
+        # Fall back to verified secondary emails
+        db_user = db.query(User).filter(
+            or_(
+                and_(User.personal_email.isnot(None), User.personal_email.ilike(login_email), User.personal_email_verified == True),
+                and_(User.work_email.isnot(None), User.work_email.ilike(login_email), User.work_email_verified == True),
+            )
+        ).first()
     if not db_user or not verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not db_user.is_verified:
