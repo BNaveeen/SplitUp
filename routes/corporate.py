@@ -470,11 +470,15 @@ def get_my_org(
     return {
         "organisation": {"id": org.id, "name": org.name, "domain": org.domain},
         "department": {"id": dept.id, "name": dept.name} if dept else None,
-        "manager": {"id": mgr.id, "name": mgr.name, "email": mgr.email} if mgr else None,
+        "manager": {"id": mgr.id, "name": mgr.name, "email": mgr.email, "job_title": mgr.job_title} if mgr else None,
         "employee_id": user.employee_id,
         "org_role": user.org_role or "member",
-        "teammates": [{"id": t.id, "name": t.name, "email": t.email, "department_id": t.department_id} for t in teammates],
-        "direct_reports": [{"id": r.id, "name": r.name, "email": r.email} for r in direct_reports],
+        "teammates": [
+            {"id": t.id, "name": t.name, "email": t.email, "department_id": t.department_id,
+             "manager_id": t.manager_id, "job_title": t.job_title}
+            for t in teammates
+        ],
+        "direct_reports": [{"id": r.id, "name": r.name, "email": r.email, "job_title": r.job_title} for r in direct_reports],
     }
 
 

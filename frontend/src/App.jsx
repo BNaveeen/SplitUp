@@ -5648,12 +5648,104 @@ function OrgCreateMemberModal({ depts, members, onClose, onCreated }) {
 }
 
 // ── Work Tab ──────────────────────────────────────────────────────────────────
+// ── Org Chart ─────────────────────────────────────────────────────────────────
+function OrgChartNode({ member, childrenMap, currentUserId }) {
+  const isMe     = member.id === currentUserId
+  const children = (childrenMap[member.id] || []).sort((a, b) => a.name.localeCompare(b.name))
+
+  return (
+    <div>
+      <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-colors ${
+        isMe
+          ? 'bg-amber-500/10 border-amber-500/40'
+          : 'bg-slate-800/60 border-slate-700/40'
+      }`}>
+        <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(member.id)} flex items-center justify-center text-xs font-bold text-white`}>
+          {member.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className={`text-sm font-semibold ${isMe ? 'text-amber-300' : 'text-slate-100'}`}>{member.name}</p>
+            {isMe && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 tracking-wide">YOU</span>}
+          </div>
+          {member.job_title
+            ? <p className="text-[10px] text-slate-500 mt-0.5">{member.job_title}</p>
+            : <p className="text-[10px] text-slate-600 mt-0.5">No title</p>
+          }
+        </div>
+        {children.length > 0 && (
+          <div className="shrink-0 flex items-center gap-1 text-[9px] text-slate-500">
+            <Users className="h-3 w-3" />
+            <span>{children.length}</span>
+          </div>
+        )}
+      </div>
+      {children.length > 0 && (
+        <div className="ml-5 mt-1.5 pl-3 border-l-2 border-slate-700/50 space-y-1.5 pb-0.5">
+          {children.map(child => (
+            <OrgChartNode key={child.id} member={child} childrenMap={childrenMap} currentUserId={currentUserId} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OrgChartView({ orgInfo, currentUser }) {
+  const { teammates, manager } = orgInfo
+
+  const me = {
+    id:         currentUser.id,
+    name:       currentUser.name,
+    job_title:  currentUser.job_title || '',
+    manager_id: manager?.id ?? null,
+  }
+
+  const allMembers = [me, ...teammates]
+  const memberIds  = new Set(allMembers.map(m => m.id))
+
+  const childrenMap = {}
+  allMembers.forEach(m => {
+    if (m.manager_id && memberIds.has(m.manager_id)) {
+      if (!childrenMap[m.manager_id]) childrenMap[m.manager_id] = []
+      childrenMap[m.manager_id].push(m)
+    }
+  })
+
+  const hasAnyRelationship = allMembers.some(m => m.manager_id && memberIds.has(m.manager_id))
+
+  if (!hasAnyRelationship) return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <Users className="h-10 w-10 text-slate-700 mb-3" />
+      <p className="text-slate-300 font-semibold">No reporting structure yet</p>
+      <p className="text-xs text-slate-500 mt-1">An admin needs to assign managers to team members</p>
+    </div>
+  )
+
+  const roots = allMembers
+    .filter(m => !m.manager_id || !memberIds.has(m.manager_id))
+    .sort((a, b) => {
+      const aCh = (childrenMap[a.id] || []).length
+      const bCh = (childrenMap[b.id] || []).length
+      return bCh - aCh || a.name.localeCompare(b.name)
+    })
+
+  return (
+    <div className="space-y-2">
+      {roots.map(root => (
+        <OrgChartNode key={root.id} member={root} childrenMap={childrenMap} currentUserId={currentUser.id} />
+      ))}
+    </div>
+  )
+}
+
 function WorkTab({ currentUser }) {
   const [orgInfo, setOrgInfo]     = useState(null)
   const [reports, setReports]     = useState([])
   const [approvals, setApprovals] = useState([])
   const [loading, setLoading]     = useState(true)
   const [section, setSection]     = useState('reports')
+  const [teamView, setTeamView]   = useState('list')
   const [showCreate, setShowCreate]       = useState(false)
   const [openReport, setOpenReport]       = useState(null)
   const [openApproval, setOpenApproval]   = useState(null)
@@ -5905,63 +5997,91 @@ function WorkTab({ currentUser }) {
       {/* ── Team ── */}
       {section === 'team' && (
         <div className="space-y-3">
-          {manager && (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Your Manager</p>
-              <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3 flex items-center gap-3">
-                <div className={`h-10 w-10 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(manager.id)} flex items-center justify-center text-sm font-bold text-white`}>
-                  {manager.name.charAt(0)}
-                </div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-slate-100 text-sm">{manager.name}</p>
-                  <p className="text-[11px] text-slate-500 truncate">{manager.email}</p>
-                </div>
-                <Shield className="h-4 w-4 text-slate-600 shrink-0 ml-auto" />
-              </div>
-            </div>
-          )}
 
-          {direct_reports?.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Direct Reports ({direct_reports.length})</p>
-              <div className="grid grid-cols-2 gap-2">
-                {direct_reports.map(r => (
-                  <div key={r.id} className="bg-slate-800/60 border border-amber-500/15 rounded-xl p-3 flex items-center gap-2">
-                    <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(r.id)} flex items-center justify-center text-xs font-bold text-white`}>
-                      {r.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-200 truncate">{r.name}</p>
-                      <p className="text-[10px] text-slate-600 truncate">{r.email}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* View toggle */}
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{org.name}</p>
+            <div className="flex bg-slate-800/70 rounded-lg p-0.5 border border-slate-700/40">
+              {[
+                { id: 'list',  label: 'List'  },
+                { id: 'chart', label: 'Chart' },
+              ].map(v => (
+                <button key={v.id} onClick={() => setTeamView(v.id)}
+                  className={`px-3 py-1 rounded-md text-[10px] font-semibold transition-all ${
+                    teamView === v.id ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}>{v.label}</button>
+              ))}
             </div>
-          )}
-
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              Team — {org.name} {teammates.length > 0 && `(${teammates.length})`}
-            </p>
-            {teammates.length === 0 ? (
-              <p className="text-xs text-slate-600 py-4 text-center">No other team members yet</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {teammates.map(t => (
-                  <div key={t.id} className="bg-slate-800/60 border border-slate-700/40 rounded-xl p-3 flex items-center gap-2">
-                    <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(t.id)} flex items-center justify-center text-xs font-bold text-white`}>
-                      {t.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-200 truncate">{t.name}</p>
-                      <p className="text-[10px] text-slate-600 truncate">{t.email}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
+
+          {/* Chart view */}
+          {teamView === 'chart' && (
+            <OrgChartView orgInfo={orgInfo} currentUser={currentUser} />
+          )}
+
+          {/* List view */}
+          {teamView === 'list' && (
+            <>
+              {manager && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Your Manager</p>
+                  <div className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3 flex items-center gap-3">
+                    <div className={`h-10 w-10 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(manager.id)} flex items-center justify-center text-sm font-bold text-white`}>
+                      {manager.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-100 text-sm">{manager.name}</p>
+                      {manager.job_title && <p className="text-[10px] text-amber-400/80">{manager.job_title}</p>}
+                      <p className="text-[11px] text-slate-500 truncate">{manager.email}</p>
+                    </div>
+                    <Shield className="h-4 w-4 text-slate-600 shrink-0" />
+                  </div>
+                </div>
+              )}
+
+              {direct_reports?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Direct Reports ({direct_reports.length})</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {direct_reports.map(r => (
+                      <div key={r.id} className="bg-slate-800/60 border border-amber-500/15 rounded-xl p-3 flex items-center gap-2">
+                        <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(r.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                          {r.name.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-200 truncate">{r.name}</p>
+                          <p className="text-[10px] text-slate-600 truncate">{r.job_title || r.email}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                  Colleagues {teammates.length > 0 && `(${teammates.length})`}
+                </p>
+                {teammates.length === 0 ? (
+                  <p className="text-xs text-slate-600 py-4 text-center">No other team members yet</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {teammates.map(t => (
+                      <div key={t.id} className="bg-slate-800/60 border border-slate-700/40 rounded-xl p-3 flex items-center gap-2">
+                        <div className={`h-8 w-8 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(t.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                          {t.name.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-200 truncate">{t.name}</p>
+                          <p className="text-[10px] text-slate-600 truncate">{t.job_title || t.email}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
