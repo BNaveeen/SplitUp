@@ -304,8 +304,6 @@ def link_email(
 
     # Work email: user must belong to an org and the email domain must match
     if body.email_type == "work":
-        if not user.organisation_id:
-            raise HTTPException(400, "You must belong to a company to add a work email")
         org_domain = user.organisation_domain
         if org_domain:
             email_domain = new_email.split("@")[-1] if "@" in new_email else ""
