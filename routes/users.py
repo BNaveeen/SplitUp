@@ -342,12 +342,12 @@ def link_email(
     db.refresh(user)
 
     label = "personal" if body.email_type == "personal" else "work"
-    send_email(
+    sent = send_email(
         new_email,
         f"Verify your {label} email — SplitUp",
         otp_email_html(otp, f"Use this code to verify your {label} email address and link it to your SplitUp account."),
     )
-    return {"message": "otp_sent", "email": new_email}
+    return {"message": "otp_sent", "email": new_email, "dev_otp": otp if not sent else None}
 
 
 @router.post("/users/{user_id}/verify-linked-email", response_model=UserResponse)

@@ -44,7 +44,7 @@ def register_user(request: Request, user: UserRegister, db: Session = Depends(ge
         "Verify your SplitUp account",
         otp_email_html(otp, "Use this code to verify your email address and activate your account."),
     )
-    return {"message": "verification_required", "email": normalized_email, "email_sent": sent}
+    return {"message": "verification_required", "email": normalized_email, "email_sent": sent, "dev_otp": otp if not sent else None}
 
 
 @router.post("/verify-email/", response_model=TokenResponse)
@@ -82,9 +82,9 @@ def resend_verification(request: Request, body: ForgotPasswordRequest, db: Sessi
     db.add(EmailVerification(email=email, otp=otp,
                              expires_at=datetime.utcnow() + timedelta(minutes=10)))
     db.commit()
-    send_email(email, "Your SplitUp verification code",
-               otp_email_html(otp, "Use this code to verify your email address."))
-    return {"message": "ok"}
+    sent = send_email(email, "Your SplitUp verification code",
+                      otp_email_html(otp, "Use this code to verify your email address."))
+    return {"message": "ok", "dev_otp": otp if not sent else None}
 
 
 @router.post("/login/", response_model=TokenResponse)
@@ -125,15 +125,17 @@ def login_user(request: Request, user: UserLogin, db: Session = Depends(get_db))
 def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     email = body.email.strip().lower()
     db_user = db.query(User).filter(User.email == email).first()
+    dev_otp = None
     if db_user and db_user.is_verified:
         db.query(PasswordReset).filter(PasswordReset.email == email).delete()
         otp = generate_otp()
         db.add(PasswordReset(email=email, otp=otp,
                              expires_at=datetime.utcnow() + timedelta(minutes=10)))
         db.commit()
-        send_email(email, "Reset your SplitUp password",
-                   otp_email_html(otp, "Use this code to reset your password."))
-    return {"message": "ok"}
+        sent = send_email(email, "Reset your SplitUp password",
+                          otp_email_html(otp, "Use this code to reset your password."))
+        dev_otp = otp if not sent else None
+    return {"message": "ok", "dev_otp": dev_otp}
 
 
 @router.post("/reset-password/")
