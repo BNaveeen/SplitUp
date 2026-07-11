@@ -8432,6 +8432,10 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
 
   const sendOtp = async () => {
     if (!newEmail.trim()) return
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim())) {
+      setErr('Please enter a valid email address')
+      return
+    }
     if (!domainOk(newEmail.trim())) {
       setErr(`Work email must use your company domain (@${domain.replace(/^@/, '')})`)
       return
