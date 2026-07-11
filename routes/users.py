@@ -319,8 +319,17 @@ def link_email(
             and_(User.work_email.isnot(None), User.work_email.ilike(new_email)),
         )
     ).first()
+    is_interlink = False
     if taken:
-        raise HTTPException(400, "That email is already linked to another account")
+        # If it's used as a secondary on another account → hard block
+        is_secondary = (
+            (taken.personal_email and taken.personal_email.lower() == new_email) or
+            (taken.work_email and taken.work_email.lower() == new_email)
+        )
+        if is_secondary:
+            raise HTTPException(400, "That email is already linked to another account")
+        # It's the primary email of another account → allow interlink via OTP
+        is_interlink = True
 
     # Store a pending (unverified) email on the user so the frontend knows what's pending
     if body.email_type == "personal":
@@ -345,7 +354,8 @@ def link_email(
         f"Verify your {label} email — SplitUp",
         otp_email_html(otp, f"Use this code to verify your {label} email address and link it to your SplitUp account."),
     )
-    return {"message": "otp_sent", "email": new_email, "dev_otp": otp if not sent else None}
+    msg = "otp_sent_interlink" if is_interlink else "otp_sent"
+    return {"message": msg, "email": new_email, "dev_otp": otp if not sent else None}
 
 
 @router.post("/users/{user_id}/verify-linked-email", response_model=UserResponse)
@@ -376,6 +386,18 @@ def verify_linked_email(
     else:
         user.work_email = email
         user.work_email_verified = True
+        # If this email is the primary of another account, copy org membership
+        source = db.query(User).filter(
+            User.email.ilike(email), User.id != user_id
+        ).first()
+        if source and source.organisation_id and not user.organisation_id:
+            user.organisation_id = source.organisation_id
+            user.department_id = source.department_id
+            user.manager_id = source.manager_id
+            user.org_role = source.org_role or "member"
+            user.employee_id = source.employee_id
+            if not user.job_title and source.job_title:
+                user.job_title = source.job_title
     db.commit()
     db.refresh(user)
     return user
