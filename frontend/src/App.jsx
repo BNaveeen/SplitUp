@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+﻿import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 // CACHE BUST FOR VITE FAST REFRESH
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -4874,19 +4874,200 @@ function OrgAdminPage({ currentUser }) {
   )
 }
 
+// ── Member Edit Modal ──────────────────────────────────────────────────────────
+function MemberEditModal({ member: init, depts, members, currentUserId, onClose, onSaved, onRemoved }) {
+  const [m, setM]               = useState(init)
+  const [jobTitle, setJobTitle] = useState(init.job_title || '')
+  const [saving, setSaving]     = useState(null)
+  const [removeLoading, setRemoveLoading] = useState(false)
+
+  const isInactive = m.org_status === 'inactive'
+  const isSelf     = m.id === currentUserId
+  const roleMeta   = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
+
+  const save = async (field, value) => {
+    setSaving(field)
+    try {
+      await orgUpdateMember(m.id, { [field]: value })
+      const updated = { ...m, [field]: value }
+      setM(updated)
+      onSaved(updated)
+    } catch (e) { alert(e.message) } finally { setSaving(null) }
+  }
+
+  const toggleStatus = async () => {
+    const newStatus = isInactive ? 'active' : 'inactive'
+    if (!confirm(`${isInactive ? 'Reactivate' : 'Deactivate'} ${m.name}'s work account?`)) return
+    setSaving('status')
+    try {
+      await setOrgMemberStatus(m.id, newStatus)
+      const updated = { ...m, org_status: newStatus }
+      setM(updated)
+      onSaved(updated)
+    } catch (e) { alert(e.message) } finally { setSaving(null) }
+  }
+
+  const handleRemove = async () => {
+    if (!confirm(`Remove ${m.name} from the organisation? They will lose access to all work features.`)) return
+    setRemoveLoading(true)
+    try { await orgRemoveMember(m.id); onRemoved(m.id) }
+    catch (e) { alert(e.message) } finally { setRemoveLoading(false) }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-sm"
+      onClick={onClose}>
+      <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }}
+        className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700/50 shrink-0">
+          <div className={`h-11 w-11 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-lg font-bold text-white ${isInactive ? 'grayscale' : ''}`}>
+            {m.name.charAt(0).toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="font-bold text-white text-sm truncate">{m.name}</p>
+              {isInactive && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/25 shrink-0">INACTIVE</span>}
+            </div>
+            <p className="text-[11px] text-slate-400 truncate">{m.email}</p>
+          </div>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${roleMeta.color}`}>{roleMeta.label}</span>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors shrink-0">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+
+          {/* Account status */}
+          {!isSelf && (
+            <div className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+              isInactive ? 'bg-rose-500/5 border-rose-500/20' : 'bg-emerald-500/5 border-emerald-500/20'
+            }`}>
+              <div className="flex items-center gap-2">
+                {isInactive
+                  ? <><AlertCircle className="h-4 w-4 text-rose-400 shrink-0" /><div><p className="text-xs font-semibold text-rose-300">Account inactive</p><p className="text-[10px] text-slate-500">Work email login blocked</p></div></>
+                  : <><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" /><div><p className="text-xs font-semibold text-emerald-300">Account active</p><p className="text-[10px] text-slate-500">Normal access</p></div></>
+                }
+              </div>
+              <button onClick={toggleStatus} disabled={saving === 'status'}
+                className={`shrink-0 text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${
+                  isInactive
+                    ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/25'
+                    : 'text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/25'
+                }`}>
+                {saving === 'status' ? <Loader2 className="h-3 w-3 animate-spin" /> : isInactive ? 'Reactivate' : 'Deactivate'}
+              </button>
+            </div>
+          )}
+
+          {/* Profile fields */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Profile</p>
+            <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl divide-y divide-slate-700/40">
+
+              {/* Job Title */}
+              <div className="px-3 py-2.5 flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-20 shrink-0">Job Title</span>
+                <input value={jobTitle} onChange={e => setJobTitle(e.target.value)}
+                  onBlur={() => { if (jobTitle !== (m.job_title || '')) save('job_title', jobTitle || null) }}
+                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                  placeholder="e.g. Product Manager"
+                  className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-600 outline-none" />
+                {saving === 'job_title' && <Loader2 className="h-3 w-3 animate-spin text-slate-500 shrink-0" />}
+              </div>
+
+              {/* Role */}
+              <div className="px-3 py-2.5 flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-20 shrink-0">Role</span>
+                {isSelf ? (
+                  <span className="text-xs text-slate-400">{roleMeta.label} (you)</span>
+                ) : (
+                  <div className="flex rounded-lg overflow-hidden border border-slate-700 flex-1">
+                    {['member', 'admin'].map(r => (
+                      <button key={r} onClick={() => save('org_role', r)} disabled={saving === 'org_role'}
+                        className={`flex-1 py-1 text-[10px] font-bold capitalize transition-colors ${
+                          m.org_role === r
+                            ? r === 'admin' ? 'bg-violet-500/25 text-violet-300' : 'bg-slate-700 text-slate-200'
+                            : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'
+                        }`}>{r}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Department */}
+              <div className="px-3 py-2.5 flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-20 shrink-0">Department</span>
+                <select value={m.department_id || ''} onChange={e => save('department_id', e.target.value ? parseInt(e.target.value) : null)}
+                  disabled={saving === 'department_id'}
+                  className="flex-1 bg-transparent text-xs text-slate-300 outline-none cursor-pointer">
+                  <option value="">No department</option>
+                  {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+                {saving === 'department_id' && <Loader2 className="h-3 w-3 animate-spin text-slate-500 shrink-0" />}
+              </div>
+
+              {/* Manager */}
+              <div className="px-3 py-2.5 flex items-center gap-3">
+                <span className="text-xs text-slate-500 w-20 shrink-0">Reports to</span>
+                <select value={m.manager_id || ''} onChange={e => save('manager_id', e.target.value ? parseInt(e.target.value) : null)}
+                  disabled={saving === 'manager_id'}
+                  className="flex-1 bg-transparent text-xs text-slate-300 outline-none cursor-pointer">
+                  <option value="">No manager</option>
+                  {members.filter(x => x.id !== m.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
+                {saving === 'manager_id' && <Loader2 className="h-3 w-3 animate-spin text-slate-500 shrink-0" />}
+              </div>
+            </div>
+          </div>
+
+          {/* Danger zone */}
+          {!isSelf && (
+            <div className="space-y-1">
+              <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Danger zone</p>
+              <button onClick={handleRemove} disabled={removeLoading}
+                className="w-full py-2.5 rounded-xl border border-red-500/20 text-red-400 text-xs font-bold hover:bg-red-500/10 transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
+                {removeLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><UserMinus className="h-3.5 w-3.5" /> Remove from organisation</>}
+              </button>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+// ── Org Admin Panel ────────────────────────────────────────────────────────────
 function OrgAdminPanel({ currentUser }) {
   const [stats, setStats]           = useState(null)
   const [members, setMembers]       = useState([])
   const [allReports, setAllReports] = useState([])
   const [depts, setDepts]           = useState([])
   const [loading, setLoading]       = useState(true)
-  const [section, setSection]       = useState('members') // overview | members | reports | depts | admins
-  const [showAddModal, setShowAdd]  = useState(false)
-  const [showCreateModal, setShowCreateM] = useState(false)
+  const [tab, setTab]               = useState('members')
+  const [showAdd, setShowAdd]       = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
+  const [editingMember, setEditingMember] = useState(null)
+
+  // Members tab
+  const [search, setSearch]           = useState('')
+  const [filterDept, setFilterDept]   = useState('')
+  const [filterRole, setFilterRole]   = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+
+  // Reports tab
+  const [reportFilter, setReportFilter]     = useState('pending')
+  const [reviewingReport, setReviewingReport] = useState(null)
+  const [reviewNote, setReviewNote]           = useState('')
+  const [reviewLoading, setReviewLoading]     = useState(false)
+
+  // Settings tab
   const [newDeptName, setNewDeptName] = useState('')
-  const [reviewingReport, setReviewingReport] = useState(null) // { report, action }
-  const [reviewNote, setReviewNote] = useState('')
-  const [reviewLoading, setReviewLoading] = useState(false)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -4899,359 +5080,384 @@ function OrgAdminPanel({ currentUser }) {
 
   useEffect(() => { reload() }, [reload])
 
-  const STATUS_META = {
-    draft:      { label: 'Draft',      color: 'text-slate-400 bg-slate-800 border-slate-700' },
-    submitted:  { label: 'Submitted',  color: 'text-blue-300 bg-blue-500/10 border-blue-500/20' },
-    approved:   { label: 'Approved',   color: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
-    rejected:   { label: 'Rejected',   color: 'text-red-300 bg-red-500/10 border-red-500/20' },
-    reimbursed: { label: 'Reimbursed', color: 'text-purple-300 bg-purple-500/10 border-purple-500/20' },
-  }
-
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="animate-spin h-6 w-6 text-violet-400" /></div>
-
-  const pendingCount   = allReports.filter(r => r.status === 'submitted').length
-  const approvedCount  = allReports.filter(r => r.status === 'approved').length
-  const orgAdmins      = members.filter(m => m.org_role === 'admin')
-  const nonAdminMembers = members.filter(m => m.org_role !== 'admin')
+  const pendingCount  = allReports.filter(r => r.status === 'submitted').length
+  const approvedCount = allReports.filter(r => r.status === 'approved').length
+  const activeCount   = members.filter(m => (m.org_status || 'active') === 'active').length
 
   const handleReview = async () => {
     if (!reviewingReport) return
     setReviewLoading(true)
     try {
-      if (reviewingReport.action === 'approve')
-        await orgApproveReport(reviewingReport.report.id, reviewNote || null)
-      else if (reviewingReport.action === 'reject')
-        await orgRejectReport(reviewingReport.report.id, reviewNote || null)
-      else if (reviewingReport.action === 'reimburse')
-        await orgReimburseReport(reviewingReport.report.id)
+      if (reviewingReport.action === 'approve')       await orgApproveReport(reviewingReport.report.id, reviewNote || null)
+      else if (reviewingReport.action === 'reject')   await orgRejectReport(reviewingReport.report.id, reviewNote || null)
+      else if (reviewingReport.action === 'reimburse') await orgReimburseReport(reviewingReport.report.id)
       setReviewingReport(null); setReviewNote(''); await reload()
     } catch (e) { alert(e.message) } finally { setReviewLoading(false) }
   }
 
-  const NAV = [
-    { id: 'members',  label: 'Members',     icon: Users     },
-    { id: 'reports',  label: 'Reports',     icon: FileText  },
-    { id: 'depts',    label: 'Departments', icon: Building2 },
+  const REPORT_STATUS = {
+    draft:      { label: 'Draft',      badge: 'text-slate-400 bg-slate-800 border-slate-700',                bar: 'bg-slate-600' },
+    submitted:  { label: 'Submitted',  badge: 'text-blue-300 bg-blue-500/10 border-blue-500/20',             bar: 'bg-blue-500' },
+    approved:   { label: 'Approved',   badge: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',    bar: 'bg-emerald-500' },
+    rejected:   { label: 'Rejected',   badge: 'text-red-300 bg-red-500/10 border-red-500/20',                bar: 'bg-red-500' },
+    reimbursed: { label: 'Reimbursed', badge: 'text-purple-300 bg-purple-500/10 border-purple-500/20',       bar: 'bg-purple-500' },
+  }
+
+  const filteredMembers = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return members.filter(m => {
+      if (q && !m.name.toLowerCase().includes(q) && !m.email.toLowerCase().includes(q) && !(m.job_title || '').toLowerCase().includes(q)) return false
+      if (filterDept && String(m.department_id) !== filterDept) return false
+      if (filterRole && m.org_role !== filterRole) return false
+      if (filterStatus === 'active'   && m.org_status === 'inactive') return false
+      if (filterStatus === 'inactive' && m.org_status !== 'inactive') return false
+      return true
+    })
+  }, [members, search, filterDept, filterRole, filterStatus])
+
+  const filteredReports = useMemo(() => {
+    if (reportFilter === 'all')        return allReports
+    if (reportFilter === 'pending')    return allReports.filter(r => r.status === 'submitted')
+    if (reportFilter === 'approved')   return allReports.filter(r => r.status === 'approved')
+    if (reportFilter === 'reimbursed') return allReports.filter(r => r.status === 'reimbursed')
+    if (reportFilter === 'rejected')   return allReports.filter(r => r.status === 'rejected')
+    return allReports
+  }, [allReports, reportFilter])
+
+  const TABS = [
+    { id: 'members',  label: 'Members',  icon: Users,    badge: members.length, badgeColor: 'bg-slate-600' },
+    { id: 'reports',  label: 'Reports',  icon: FileText, badge: pendingCount > 0 ? pendingCount : null, badgeColor: 'bg-amber-500' },
+    { id: 'settings', label: 'Settings', icon: Settings, badge: null },
   ]
 
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="animate-spin h-6 w-6 text-violet-400" /></div>
+
   return (
-    <div className="space-y-4">
-      {/* Dashboard header */}
-      <div className="bg-gradient-to-r from-violet-500/10 to-indigo-500/10 border border-violet-500/20 rounded-2xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
-              <Building2 className="h-5 w-5 text-white" />
+    <div className="space-y-4 pb-4">
+
+      {/* ── Header ── */}
+      <div className="rounded-2xl overflow-hidden border border-violet-500/20">
+        <div className="h-1 bg-gradient-to-r from-violet-500 to-indigo-500" />
+        <div className="bg-slate-800/70 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0">
+                <Building2 className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <p className="font-bold text-white">{stats?.org_name || 'Company'}</p>
+                <p className="text-xs text-violet-300/80">Admin Dashboard</p>
+              </div>
             </div>
-            <div>
-              <p className="font-bold text-white text-sm">{stats?.org_name || 'Company'}</p>
-              <p className="text-xs text-violet-300/80">Admin Dashboard</p>
-            </div>
+            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30">Admin</span>
           </div>
-          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30">
-            {ORG_ROLE_META.admin.label}
-          </span>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'Members', value: stats?.member_count ?? 0, color: 'text-violet-300' },
+              { label: 'Active',  value: activeCount,               color: 'text-emerald-300' },
+              { label: 'Pending', value: pendingCount,              color: pendingCount > 0 ? 'text-amber-300' : 'text-slate-400' },
+              { label: 'Depts',   value: depts.length,              color: 'text-blue-300' },
+            ].map(s => (
+              <div key={s.label} className="bg-slate-900/50 rounded-xl p-2.5 text-center border border-slate-700/30">
+                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+          {pendingCount > 0 && (
+            <button onClick={() => setTab('reports')}
+              className="mt-3 w-full flex items-center justify-center gap-2 text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-xl px-3 py-2 transition-colors">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {pendingCount} report{pendingCount !== 1 ? 's' : ''} waiting for your review
+            </button>
+          )}
         </div>
-        {/* Stats row */}
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            { label: 'Members',  value: stats?.member_count ?? 0, color: 'text-violet-300' },
-            { label: 'Pending',  value: pendingCount,              color: pendingCount > 0 ? 'text-amber-300' : 'text-slate-400' },
-            { label: 'Approved', value: approvedCount,             color: 'text-emerald-300' },
-            { label: 'Depts',    value: depts.length,              color: 'text-blue-300'   },
-          ].map(s => (
-            <div key={s.label} className="bg-slate-900/40 rounded-xl p-2.5 text-center border border-slate-700/30">
-              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-              <p className="text-[10px] text-slate-500 mt-0.5">{s.label}</p>
-            </div>
-          ))}
-        </div>
-        {pendingCount > 0 && (
-          <button onClick={() => setSection('reports')}
-            className="mt-3 w-full flex items-center justify-center gap-2 text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded-xl px-3 py-2 transition-colors">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {pendingCount} report{pendingCount !== 1 ? 's' : ''} waiting for review — tap to action
-          </button>
-        )}
       </div>
 
-      {/* Navigation tabs */}
+      {/* ── Tabs ── */}
       <div className="flex gap-1.5">
-        {NAV.map(n => (
-          <button key={n.id} onClick={() => setSection(n.id)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all ${
-              section === n.id
-                ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border border-slate-700/40'
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-semibold transition-all border ${
+              tab === t.id
+                ? 'bg-violet-500/20 text-violet-300 border-violet-500/30'
+                : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 border-transparent'
             }`}>
-            <n.icon className="h-3.5 w-3.5" />
-            {n.label}
-            {n.id === 'reports' && pendingCount > 0 && (
-              <span className="bg-amber-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{pendingCount}</span>
+            <t.icon className="h-3.5 w-3.5" />
+            {t.label}
+            {t.badge != null && (
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full text-white ${t.badgeColor}`}>{t.badge}</span>
             )}
           </button>
         ))}
       </div>
 
-      {/* ── Members (default section — includes Admin Team card at top) ── */}
-      {section === 'members' && (
+      {/* ══════════ MEMBERS TAB ══════════ */}
+      {tab === 'members' && (
         <div className="space-y-3">
-
-          {/* ── Admin Team card ── */}
-          <div className="bg-violet-500/8 border border-violet-500/25 rounded-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 pt-4 pb-3">
-              <p className="text-sm font-bold text-white flex items-center gap-2">
-                <Shield className="h-4 w-4 text-violet-400" /> Admin Team
-                <span className="text-[10px] font-normal text-violet-400/70 ml-1">({orgAdmins.length} admin{orgAdmins.length !== 1 ? 's' : ''})</span>
-              </p>
-              <span className="text-[10px] text-violet-400/60 italic">Can manage this Company tab</span>
+          {/* Search + filters */}
+          <div className="space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder={`Search ${members.length} members…`}
+                className="w-full bg-slate-900/60 border border-slate-700/60 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600" />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
-            {/* Current admins row */}
-            <div className="px-4 pb-3 flex flex-wrap gap-2">
-              {orgAdmins.map(a => (
-                <div key={a.id} className="flex items-center gap-1.5 bg-violet-500/15 border border-violet-500/25 rounded-full px-2.5 py-1">
-                  <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{a.name.charAt(0)}</div>
-                  <span className="text-xs text-violet-200 font-medium">{a.name}</span>
-                  {a.id !== currentUser.id && (
-                    <button onClick={async () => {
-                      if (!confirm(`Remove admin access from ${a.name}?`)) return
-                      try { await orgUpdateMember(a.id, { org_role: 'member' }); await reload() } catch (e) { alert(e.message) }
-                    }} className="text-violet-500 hover:text-red-400 transition-colors ml-0.5">
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+              <select value={filterDept} onChange={e => setFilterDept(e.target.value)}
+                className="shrink-0 bg-slate-800/80 border border-slate-700/50 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 focus:outline-none focus:border-violet-500 cursor-pointer">
+                <option value="">All depts</option>
+                {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
+                className="shrink-0 bg-slate-800/80 border border-slate-700/50 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 focus:outline-none focus:border-violet-500 cursor-pointer">
+                <option value="">All roles</option>
+                <option value="admin">Admin</option>
+                <option value="member">Member</option>
+              </select>
+              {['', 'active', 'inactive'].map(s => (
+                <button key={s} onClick={() => setFilterStatus(s)}
+                  className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                    filterStatus === s
+                      ? 'bg-violet-500/20 text-violet-300 border-violet-500/30'
+                      : 'bg-slate-800/80 text-slate-500 border-slate-700/50 hover:text-slate-300'
+                  }`}>
+                  {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
               ))}
-              {orgAdmins.length === 0 && <p className="text-xs text-slate-600 py-1">Just you so far.</p>}
             </div>
-            {/* Grant access — show members who aren't admins yet */}
-            {nonAdminMembers.length > 0 && (
-              <div className="border-t border-violet-500/15 px-4 py-3">
-                <p className="text-[10px] text-violet-400/70 mb-2 font-semibold uppercase tracking-wider">Grant admin access to a team member</p>
-                <div className="flex flex-wrap gap-2">
-                  {nonAdminMembers.map(m => (
-                    <button key={m.id} onClick={async () => {
-                      if (!confirm(`Make ${m.name} an admin? They'll see the Company tab and can manage this organisation.`)) return
-                      try { await orgUpdateMember(m.id, { org_role: 'admin' }); await reload() } catch (e) { alert(e.message) }
-                    }} className="flex items-center gap-1.5 bg-slate-700/60 hover:bg-violet-500/15 border border-slate-600/50 hover:border-violet-500/30 rounded-full px-2.5 py-1 transition-all group">
-                      <div className={`h-5 w-5 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>{m.name.charAt(0)}</div>
-                      <span className="text-xs text-slate-400 group-hover:text-violet-300 transition-colors">{m.name}</span>
-                      <Plus className="h-3 w-3 text-slate-600 group-hover:text-violet-400 transition-colors" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Add / Create buttons */}
+          {(search || filterDept || filterRole || filterStatus) && (
+            <p className="text-xs text-slate-500">
+              {filteredMembers.length} of {members.length} member{members.length !== 1 ? 's' : ''}
+              <button onClick={() => { setSearch(''); setFilterDept(''); setFilterRole(''); setFilterStatus('') }}
+                className="ml-2 text-violet-400 hover:text-violet-300">Clear filters</button>
+            </p>
+          )}
+
           <div className="flex gap-2">
             <button onClick={() => setShowAdd(true)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 rounded-xl transition-colors">
-              <UserPlus className="h-3.5 w-3.5" /> Add Existing User
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 rounded-xl transition-colors">
+              <UserPlus className="h-3.5 w-3.5" /> Add Existing
             </button>
-            <button onClick={() => setShowCreateM(true)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 rounded-xl transition-colors">
-              <Plus className="h-3.5 w-3.5" /> Create New User
+            <button onClick={() => setShowCreate(true)}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 rounded-xl transition-colors">
+              <Plus className="h-3.5 w-3.5" /> Create New
             </button>
           </div>
 
-          {members.length === 0 ? (
-            <p className="text-sm text-slate-600 text-center py-8">No members yet — add or create users above.</p>
+          {filteredMembers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Users className="h-10 w-10 text-slate-700 mb-3" />
+              <p className="text-slate-400 font-medium">{search ? 'No members match your search' : 'No members yet'}</p>
+              {search && <button onClick={() => setSearch('')} className="text-xs text-violet-400 mt-1">Clear search</button>}
+            </div>
           ) : (
-            members.map(m => {
-              const roleMeta  = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
-              const isAdmin   = m.org_role === 'admin'
-              const isInactive = m.org_status === 'inactive'
-              return (
-                <div key={m.id} className={`border rounded-2xl p-3.5 space-y-3 transition-colors ${isInactive ? 'bg-slate-900/60 border-slate-700/30 opacity-75' : 'bg-slate-800/60 border-slate-700/40'}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className={`h-9 w-9 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-sm font-bold text-white shrink-0 ${isInactive ? 'grayscale' : ''}`}>
-                        {m.name.charAt(0)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className={`text-sm font-semibold truncate ${isInactive ? 'text-slate-400' : 'text-slate-100'}`}>{m.name}</p>
-                          {isInactive && (
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/25 shrink-0">INACTIVE</span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-slate-500 truncate">{m.job_title || m.email}</p>
-                      </div>
+            <div className="space-y-1.5">
+              {filteredMembers.map(m => {
+                const role     = ORG_ROLE_META[m.org_role] || ORG_ROLE_META.member
+                const inactive = m.org_status === 'inactive'
+                const deptName = depts.find(d => d.id === m.department_id)?.name
+                return (
+                  <button key={m.id} onClick={() => setEditingMember(m)}
+                    className={`w-full text-left flex items-center gap-3 p-3 rounded-xl border transition-all hover:border-violet-500/30 active:scale-[0.99] ${
+                      inactive ? 'bg-slate-900/50 border-slate-700/30 opacity-70' : 'bg-slate-800/50 border-slate-700/40 hover:bg-slate-800/80'
+                    }`}>
+                    <div className={`h-9 w-9 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(m.id)} flex items-center justify-center text-sm font-bold text-white ${inactive ? 'grayscale' : ''}`}>
+                      {m.name.charAt(0).toUpperCase()}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${roleMeta.color}`}>{roleMeta.label}</span>
-                      {m.id !== currentUser.id && (
-                        <button onClick={async () => {
-                          if (!confirm(`Remove ${m.name} from the organisation?`)) return
-                          try { await orgRemoveMember(m.id); await reload() } catch (e) { alert(e.message) }
-                        }} className="p-1 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
-                          <X className="h-3.5 w-3.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className={`text-sm font-semibold truncate ${inactive ? 'text-slate-400' : 'text-slate-100'}`}>{m.name}</p>
+                        {inactive && <span className="text-[9px] font-bold px-1.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/20 shrink-0">OFF</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        {m.job_title ? m.job_title : m.email}{deptName ? ` · ${deptName}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${role.color}`}>{role.label}</span>
+                      <ChevronRight className="h-3.5 w-3.5 text-slate-600" />
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════ REPORTS TAB ══════════ */}
+      {tab === 'reports' && (
+        <div className="space-y-3">
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            {[
+              { id: 'pending',    label: 'Pending',    count: pendingCount },
+              { id: 'approved',   label: 'Approved',   count: approvedCount },
+              { id: 'reimbursed', label: 'Reimbursed', count: allReports.filter(r => r.status === 'reimbursed').length },
+              { id: 'rejected',   label: 'Rejected',   count: allReports.filter(r => r.status === 'rejected').length },
+              { id: 'all',        label: 'All',        count: allReports.length },
+            ].map(f => (
+              <button key={f.id} onClick={() => setReportFilter(f.id)}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
+                  reportFilter === f.id
+                    ? 'bg-violet-500/20 text-violet-300 border-violet-500/30'
+                    : 'bg-slate-800/60 text-slate-500 border-transparent hover:text-slate-300'
+                }`}>
+                {f.label}
+                {f.count > 0 && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-slate-700 text-slate-400">{f.count}</span>}
+              </button>
+            ))}
+          </div>
+
+          {filteredReports.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 text-center">
+              <FileText className="h-10 w-10 text-slate-700 mb-3" />
+              <p className="text-slate-400 font-medium">No {reportFilter === 'all' ? '' : reportFilter} reports</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredReports.map(r => {
+                const s = REPORT_STATUS[r.status] || REPORT_STATUS.draft
+                return (
+                  <div key={r.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl overflow-hidden">
+                    <div className={`h-0.5 w-full ${s.bar}`} />
+                    <div className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-slate-100 text-sm truncate">{r.title}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <div className={`h-3.5 w-3.5 rounded-full bg-gradient-to-br ${avatarColor(r.submitted_by_id || 0)} flex items-center justify-center text-[8px] font-bold text-white shrink-0`}>
+                              {(r.submitted_by_name || '?').charAt(0)}
+                            </div>
+                            <p className="text-[11px] text-slate-500">{r.submitted_by_name}</p>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-base font-bold text-white">{r.currency} {Number(r.total_amount).toFixed(2)}</p>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${s.badge}`}>{s.label}</span>
+                        </div>
+                      </div>
+                      {r.review_notes && (
+                        <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-1.5">{r.review_notes}</p>
+                      )}
+                      {r.status === 'submitted' && (
+                        <div className="flex gap-2">
+                          <button onClick={() => { setReviewingReport({ report: r, action: 'approve' }); setReviewNote('') }}
+                            className="flex-1 py-1.5 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl transition-colors">
+                            Approve
+                          </button>
+                          <button onClick={() => { setReviewingReport({ report: r, action: 'reject' }); setReviewNote('') }}
+                            className="flex-1 py-1.5 text-xs font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors">
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                      {r.status === 'approved' && (
+                        <button onClick={() => { setReviewingReport({ report: r, action: 'reimburse' }); setReviewNote('') }}
+                          className="w-full py-1.5 text-xs font-bold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-colors">
+                          Mark Reimbursed
                         </button>
                       )}
                     </div>
                   </div>
-                  {/* Active / Inactive status toggle */}
-                  {m.id !== currentUser.id && (
-                    <div className="flex items-center justify-between px-3 py-2 rounded-xl border border-slate-700/40 bg-slate-900/30">
-                      <div className="flex items-center gap-2">
-                        {isInactive
-                          ? <><AlertCircle className="h-3.5 w-3.5 text-rose-400" /><span className="text-xs text-rose-300 font-medium">Account inactive — work login blocked</span></>
-                          : <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><span className="text-xs text-emerald-300 font-medium">Account active</span></>
-                        }
-                      </div>
-                      <button onClick={async () => {
-                        const newStatus = isInactive ? 'active' : 'inactive'
-                        const label = isInactive ? 'reactivate' : 'deactivate'
-                        if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} ${m.name}'s work account?\n\n${isInactive ? 'They will be able to log in with their work email again.' : 'They will not be able to log in with their work email. All work expenses remain visible to the company.'}`)) return
-                        try {
-                          await setOrgMemberStatus(m.id, newStatus)
-                          setMembers(p => p.map(x => x.id === m.id ? { ...x, org_status: newStatus } : x))
-                        } catch (e) { alert(e.message) }
-                      }} className={`text-[10px] font-bold px-2.5 py-1 rounded-lg transition-colors ${
-                        isInactive
-                          ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25'
-                          : 'text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25'
-                      }`}>
-                        {isInactive ? 'Reactivate' : 'Deactivate'}
-                      </button>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                    {/* Job Title — free text, admin-only */}
-                    <div>
-                      <p className="text-[10px] text-slate-600 mb-1">Job Title</p>
-                      <JobTitleInput memberId={m.id} value={m.job_title || ''} onSave={async (val) => {
-                        try { await orgUpdateMember(m.id, { job_title: val }); setMembers(p => p.map(x => x.id === m.id ? { ...x, job_title: val } : x)) } catch (err) { alert(err.message) }
-                      }} />
-                    </div>
-                    {/* Category — Admin or Member */}
-                    <div>
-                      <p className="text-[10px] text-slate-600 mb-1">Category</p>
-                      {m.id === currentUser.id ? (
-                        <span className={`inline-flex items-center text-[10px] font-bold px-2 py-1.5 rounded-lg border ${roleMeta.color}`}>{roleMeta.label} (you)</span>
-                      ) : (
-                        <div className="flex rounded-lg overflow-hidden border border-slate-700">
-                          <button onClick={async () => {
-                            if (isAdmin) return
-                            try { await orgUpdateMember(m.id, { org_role: 'admin' }); setMembers(p => p.map(x => x.id === m.id ? { ...x, org_role: 'admin' } : x)) } catch (err) { alert(err.message) }
-                          }} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${isAdmin ? 'bg-violet-500/20 text-violet-300' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>
-                            Admin
-                          </button>
-                          <button onClick={async () => {
-                            if (!isAdmin) return
-                            try { await orgUpdateMember(m.id, { org_role: 'member' }); setMembers(p => p.map(x => x.id === m.id ? { ...x, org_role: 'member' } : x)) } catch (err) { alert(err.message) }
-                          }} className={`flex-1 py-1.5 text-[10px] font-bold transition-colors ${!isAdmin ? 'bg-slate-700 text-slate-300' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>
-                            Member
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <p className="text-[10px] text-slate-600 mb-1">Department</p>
-                      <select value={m.department_id || ''} onChange={async (e) => {
-                        const deptId = e.target.value ? parseInt(e.target.value) : null
-                        try { await orgUpdateMember(m.id, { department_id: deptId }); setMembers(p => p.map(x => x.id === m.id ? { ...x, department_id: deptId } : x)) } catch (err) { alert(err.message) }
-                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
-                        <option value="">No dept</option>
-                        {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-slate-600 mb-1">Reports to</p>
-                      <select value={m.manager_id || ''} onChange={async (e) => {
-                        const mgr = e.target.value ? parseInt(e.target.value) : null
-                        try { await orgUpdateMember(m.id, { manager_id: mgr }); setMembers(p => p.map(x => x.id === m.id ? { ...x, manager_id: mgr } : x)) } catch (err) { alert(err.message) }
-                      }} className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-violet-500">
-                        <option value="">None</option>
-                        {members.filter(x => x.id !== m.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )
-            })
+                )
+              })}
+            </div>
           )}
         </div>
       )}
 
-      {/* ── Reports ── */}
-      {section === 'reports' && (
-        <div className="space-y-2">
-          {allReports.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center">
-              <FileText className="h-10 w-10 text-slate-700 mb-3" />
-              <p className="text-slate-400 font-medium">No expense reports yet</p>
+      {/* ══════════ SETTINGS TAB ══════════ */}
+      {tab === 'settings' && (
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Departments</p>
+            <div className="flex gap-2">
+              <input value={newDeptName} onChange={e => setNewDeptName(e.target.value)}
+                onKeyDown={async e => {
+                  if (e.key === 'Enter' && newDeptName.trim()) {
+                    try { await orgCreateDept(newDeptName.trim()); setNewDeptName(''); await reload() } catch (err) { alert(err.message) }
+                  }
+                }}
+                placeholder="New department name"
+                className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600" />
+              <button disabled={!newDeptName.trim()} onClick={async () => {
+                try { await orgCreateDept(newDeptName.trim()); setNewDeptName(''); await reload() } catch (e) { alert(e.message) }
+              }} className="px-4 py-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition-colors">Add</button>
             </div>
-          ) : (
-            allReports.map(r => {
-              const meta = STATUS_META[r.status] || STATUS_META.draft
-              return (
-                <div key={r.id} className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-3.5 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-slate-100 text-sm truncate">{r.title}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">{r.submitted_by_name} · {r.currency} {Number(r.total_amount).toFixed(2)}</p>
+            {depts.length === 0 ? (
+              <p className="text-xs text-slate-600 text-center py-4">No departments yet</p>
+            ) : (
+              <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl divide-y divide-slate-700/40">
+                {depts.map(d => (
+                  <div key={d.id} className="flex items-center justify-between px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-3.5 w-3.5 text-slate-600 shrink-0" />
+                      <span className="text-sm text-slate-300">{d.name}</span>
                     </div>
-                    <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.color}`}>{meta.label}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-slate-600">{members.filter(m => m.department_id === d.id).length} members</span>
+                      <button onClick={async () => {
+                        try { await orgDeleteDept(d.id); await reload() } catch (e) { alert(e.message) }
+                      }} className="text-slate-600 hover:text-red-400 transition-colors p-1">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  {r.review_notes && <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">Note: {r.review_notes}</p>}
-                  {r.status === 'submitted' && (
-                    <div className="flex gap-2 pt-1">
-                      <button onClick={() => { setReviewingReport({ report: r, action: 'approve' }); setReviewNote('') }}
-                        className="flex-1 py-1.5 text-xs font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl transition-colors">
-                        Approve
-                      </button>
-                      <button onClick={() => { setReviewingReport({ report: r, action: 'reject' }); setReviewNote('') }}
-                        className="flex-1 py-1.5 text-xs font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors">
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                  {r.status === 'approved' && (
-                    <button onClick={() => { setReviewingReport({ report: r, action: 'reimburse' }); setReviewNote('') }}
-                      className="w-full py-1.5 text-xs font-bold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-xl transition-colors">
-                      Mark Reimbursed
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Admin Team</p>
+            <div className="bg-slate-900/50 border border-violet-500/20 rounded-xl divide-y divide-slate-700/40">
+              {members.filter(m => m.org_role === 'admin').map(a => (
+                <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className={`h-7 w-7 shrink-0 rounded-full bg-gradient-to-br ${avatarColor(a.id)} flex items-center justify-center text-xs font-bold text-white`}>
+                    {a.name.charAt(0)}
+                  </div>
+                  <p className="flex-1 text-sm text-slate-300 truncate">{a.name}</p>
+                  <span className="text-[10px] text-violet-400/70">{a.id === currentUser.id ? 'you' : 'admin'}</span>
+                  {a.id !== currentUser.id && (
+                    <button onClick={async () => {
+                      if (!confirm(`Remove admin access from ${a.name}?`)) return
+                      try { await orgUpdateMember(a.id, { org_role: 'member' }); await reload() } catch (e) { alert(e.message) }
+                    }} className="text-slate-600 hover:text-red-400 transition-colors p-1">
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
-              )
-            })
-          )}
-        </div>
-      )}
-
-      {/* ── Departments ── */}
-      {section === 'depts' && (
-        <div className="space-y-3">
-          <div className="flex gap-2">
-            <input value={newDeptName} onChange={e => setNewDeptName(e.target.value)} placeholder="New department name"
-              className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600" />
-            <button disabled={!newDeptName.trim()} onClick={async () => {
-              try { await orgCreateDept(newDeptName.trim()); setNewDeptName(''); await reload() } catch (e) { alert(e.message) }
-            }} className="px-4 py-2.5 bg-violet-500 hover:bg-violet-600 disabled:opacity-40 text-white text-sm font-bold rounded-xl transition-colors">Add</button>
-          </div>
-          {depts.length === 0 ? (
-            <p className="text-sm text-slate-600 text-center py-8">No departments yet.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {depts.map(d => (
-                <span key={d.id} className="flex items-center gap-2 bg-slate-800/60 border border-slate-700/50 text-slate-300 text-xs px-3 py-1.5 rounded-full">
-                  {d.name}
-                  <button onClick={async () => {
-                    try { await orgDeleteDept(d.id); await reload() } catch (e) { alert(e.message) }
-                  }} className="text-slate-500 hover:text-red-400 transition-colors"><X className="h-3 w-3" /></button>
-                </span>
               ))}
             </div>
-          )}
+            <p className="text-[10px] text-slate-600">To grant admin access, tap a member and change their role to Admin.</p>
+          </div>
         </div>
       )}
 
-      {/* ── Review confirmation modal ── */}
+      {/* ── Member edit modal ── */}
+      <AnimatePresence>
+        {editingMember && (
+          <MemberEditModal
+            member={editingMember}
+            depts={depts}
+            members={members}
+            currentUserId={currentUser.id}
+            onClose={() => setEditingMember(null)}
+            onSaved={(updated) => setMembers(p => p.map(x => x.id === updated.id ? { ...x, ...updated } : x))}
+            onRemoved={(id) => { setMembers(p => p.filter(x => x.id !== id)); setEditingMember(null) }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── Review modal ── */}
       <AnimatePresence>
         {reviewingReport && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -5260,30 +5466,24 @@ function OrgAdminPanel({ currentUser }) {
               className="w-full max-w-sm bg-slate-800 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-700/50">
                 <h3 className="font-bold text-white text-sm">
-                  {reviewingReport.action === 'approve' && '✓ Approve Report'}
-                  {reviewingReport.action === 'reject'  && '✗ Reject Report'}
-                  {reviewingReport.action === 'reimburse' && '💳 Mark as Reimbursed'}
+                  {reviewingReport.action === 'approve' ? 'Approve Report' : reviewingReport.action === 'reject' ? 'Reject Report' : 'Mark as Reimbursed'}
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">{reviewingReport.report.title} · {reviewingReport.report.submitted_by_name}</p>
               </div>
               <div className="p-6 space-y-4">
                 {reviewingReport.action !== 'reimburse' && (
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Note (optional)</label>
-                    <textarea value={reviewNote} onChange={e => setReviewNote(e.target.value)} rows={3}
-                      placeholder="Add a comment for the employee..."
-                      className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600 resize-none" />
-                  </div>
+                  <textarea value={reviewNote} onChange={e => setReviewNote(e.target.value)} rows={3}
+                    placeholder="Add a note for the employee (optional)…"
+                    className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-violet-500 text-slate-100 placeholder-slate-600 resize-none" />
                 )}
                 <div className="flex gap-2">
                   <button onClick={() => { setReviewingReport(null); setReviewNote('') }}
                     className="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-semibold rounded-xl transition-colors">Cancel</button>
                   <button onClick={handleReview} disabled={reviewLoading}
-                    className={`flex-1 py-2.5 text-white text-sm font-bold rounded-xl transition-colors flex items-center justify-center ${
-                      reviewingReport.action === 'approve'   ? 'bg-emerald-500 hover:bg-emerald-600' :
-                      reviewingReport.action === 'reject'    ? 'bg-red-500 hover:bg-red-600' :
-                      'bg-purple-500 hover:bg-purple-600'
-                    } disabled:opacity-50`}>
+                    className={`flex-1 py-2.5 text-white text-sm font-bold rounded-xl transition-colors flex items-center justify-center disabled:opacity-50 ${
+                      reviewingReport.action === 'approve' ? 'bg-emerald-500 hover:bg-emerald-600' :
+                      reviewingReport.action === 'reject'  ? 'bg-red-500 hover:bg-red-600' : 'bg-purple-500 hover:bg-purple-600'
+                    }`}>
                     {reviewLoading ? <Loader2 className="animate-spin h-4 w-4" /> :
                       reviewingReport.action === 'approve' ? 'Approve' :
                       reviewingReport.action === 'reject'  ? 'Reject' : 'Confirm'}
@@ -5295,18 +5495,11 @@ function OrgAdminPanel({ currentUser }) {
         )}
       </AnimatePresence>
 
-      {/* Add existing user modal */}
       <AnimatePresence>
-        {showAddModal && (
-          <OrgAddMemberModal depts={depts} members={members} onClose={() => setShowAdd(false)} onAdded={() => { setShowAdd(false); reload() }} />
-        )}
+        {showAdd && <OrgAddMemberModal depts={depts} members={members} onClose={() => setShowAdd(false)} onAdded={() => { setShowAdd(false); reload() }} />}
       </AnimatePresence>
-
-      {/* Create new user modal */}
       <AnimatePresence>
-        {showCreateModal && (
-          <OrgCreateMemberModal depts={depts} members={members} onClose={() => setShowCreateM(false)} onCreated={() => { setShowCreateM(false); reload() }} />
-        )}
+        {showCreate && <OrgCreateMemberModal depts={depts} members={members} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); reload() }} />}
       </AnimatePresence>
     </div>
   )
