@@ -5711,9 +5711,11 @@ function OrgChartNode({ member, childrenMap, currentUserId }) {
   )
 }
 
-function OrgChartView({ orgInfo, currentUser }) {
-  const [zoom, setZoom]   = useState(0.9)
-  const pinchRef          = useRef({ dist: null })
+function OrgChartView({ orgInfo, currentUser, onClose }) {
+  const [zoom, setZoom] = useState(1)
+  const [pan,  setPan]  = useState({ x: 0, y: 0 })
+  const dragRef  = useRef({ active: false, startX: 0, startY: 0, panX: 0, panY: 0 })
+  const pinchRef = useRef({ dist: null })
 
   const { teammates, manager } = orgInfo
   const me = {
@@ -5740,33 +5742,46 @@ function OrgChartView({ orgInfo, currentUser }) {
     .filter(m => !m.manager_id || !memberIds.has(m.manager_id))
     .sort((a, b) => (childrenMap[b.id] || []).length - (childrenMap[a.id] || []).length || a.name.localeCompare(b.name))
 
-  const adjustZoom = delta => setZoom(z => Math.max(0.3, Math.min(2.5, +(z + delta).toFixed(2))))
+  const adjustZoom = delta => setZoom(z => Math.max(0.25, Math.min(3, +(z + delta).toFixed(2))))
 
-  const handleWheel = e => {
-    if (e.ctrlKey || e.metaKey) { e.preventDefault(); adjustZoom(-e.deltaY * 0.004) }
+  // ── mouse drag ──
+  const onMouseDown = e => {
+    if (e.button !== 0) return
+    dragRef.current = { active: true, startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y }
   }
+  const onMouseMove = e => {
+    if (!dragRef.current.active) return
+    setPan({ x: dragRef.current.panX + e.clientX - dragRef.current.startX, y: dragRef.current.panY + e.clientY - dragRef.current.startY })
+  }
+  const onMouseUp = () => { dragRef.current.active = false }
 
-  const handleTouchStart = e => {
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      pinchRef.current.dist = Math.hypot(dx, dy)
+  // ── touch drag + pinch zoom (touch-action:none means no browser default, so React handlers work) ──
+  const onTouchStart = e => {
+    if (e.touches.length === 1) {
+      dragRef.current = { active: true, startX: e.touches[0].clientX, startY: e.touches[0].clientY, panX: pan.x, panY: pan.y }
+    } else if (e.touches.length === 2) {
+      dragRef.current.active = false
+      pinchRef.current.dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
     }
   }
-
-  const handleTouchMove = e => {
-    if (e.touches.length === 2 && pinchRef.current.dist != null) {
-      e.preventDefault()
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      const dist = Math.hypot(dx, dy)
-      adjustZoom((dist - pinchRef.current.dist) * 0.005)
+  const onTouchMove = e => {
+    if (e.touches.length === 1 && dragRef.current.active) {
+      setPan({ x: dragRef.current.panX + e.touches[0].clientX - dragRef.current.startX, y: dragRef.current.panY + e.touches[0].clientY - dragRef.current.startY })
+    } else if (e.touches.length === 2 && pinchRef.current.dist != null) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY)
+      setZoom(z => Math.max(0.25, Math.min(3, z * (dist / pinchRef.current.dist))))
       pinchRef.current.dist = dist
     }
   }
+  const onTouchEnd = e => {
+    if (e.touches.length < 2) pinchRef.current.dist = null
+    if (e.touches.length === 0) dragRef.current.active = false
+  }
 
-  if (!hasAnyRelationship) return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
+  const onWheel = e => { e.preventDefault(); adjustZoom(-e.deltaY * 0.004) }
+
+  const emptyState = (
+    <div className="flex flex-col items-center justify-center h-full text-center">
       <Users className="h-10 w-10 text-slate-700 mb-3" />
       <p className="text-slate-300 font-semibold">No reporting structure yet</p>
       <p className="text-xs text-slate-500 mt-1">An admin needs to assign managers to team members</p>
@@ -5774,45 +5789,69 @@ function OrgChartView({ orgInfo, currentUser }) {
   )
 
   return (
-    <div className="rounded-2xl border border-slate-700/40 bg-slate-900/50 overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/30 bg-slate-800/60">
-        <div className="flex items-center gap-1.5">
-          <Users className="h-3.5 w-3.5 text-slate-500" />
-          <span className="text-xs text-slate-500">{allMembers.length} members</span>
+    // Fixed overlay: sits between nav (top-14 = 56px) and footer (bottom-16 = 64px)
+    <div className="fixed top-14 bottom-16 inset-x-0 z-30 bg-[#1a1a2e] flex flex-col">
+
+      {/* ── Toolbar ── */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-amber-800/30 bg-amber-950/70">
+        <div className="flex items-center gap-3">
+          {onClose && (
+            <button onClick={onClose}
+              className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-white transition-colors font-semibold">
+              <ArrowLeft className="h-3.5 w-3.5" /> List
+            </button>
+          )}
+          <span className="text-slate-600">|</span>
+          <div className="flex items-center gap-1.5">
+            <Users className="h-3.5 w-3.5 text-slate-500" />
+            <span className="text-xs text-slate-500">{allMembers.length} members</span>
+          </div>
         </div>
         <div className="flex items-center gap-0.5">
           <button onClick={() => adjustZoom(-0.15)}
-            className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg text-lg font-light transition-colors">−</button>
+            className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700/60 rounded-lg text-lg font-light transition-colors">−</button>
           <span className="text-[10px] text-slate-400 w-10 text-center font-mono tabular-nums">{Math.round(zoom * 100)}%</span>
           <button onClick={() => adjustZoom(0.15)}
-            className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg text-lg font-light transition-colors">+</button>
-          <button onClick={() => setZoom(0.9)}
-            className="text-[9px] text-slate-500 hover:text-slate-200 px-2 py-1 hover:bg-slate-700 rounded-lg transition-colors ml-1">Reset</button>
+            className="h-7 w-7 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-700/60 rounded-lg text-lg font-light transition-colors">+</button>
+          <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }}
+            className="text-[9px] text-slate-500 hover:text-slate-200 px-2 py-1 hover:bg-slate-700/60 rounded-lg transition-colors ml-1">Reset</button>
         </div>
       </div>
 
-      {/* Scrollable chart area — zoom via CSS zoom property so scrollbars reflect scaled size */}
-      <div
-        className="overflow-auto"
-        style={{ maxHeight: '62vh', touchAction: 'pan-x pan-y' }}
-        onWheel={handleWheel}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={() => { pinchRef.current.dist = null }}
-      >
-        <div className="flex justify-center p-8" style={{ zoom, minWidth: 'max-content' }}>
-          {roots.length === 1 ? (
-            <OrgChartNode member={roots[0]} childrenMap={childrenMap} currentUserId={currentUser.id} />
-          ) : (
-            <div className="flex items-start gap-6">
-              {roots.map(root => (
-                <OrgChartNode key={root.id} member={root} childrenMap={childrenMap} currentUserId={currentUser.id} />
-              ))}
-            </div>
-          )}
+      {/* ── Canvas — fills remaining height, drag to pan ── */}
+      {!hasAnyRelationship ? emptyState : (
+        <div
+          className="flex-1 min-h-0 overflow-hidden relative select-none cursor-grab active:cursor-grabbing"
+          style={{ touchAction: 'none' }}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          onWheel={onWheel}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+        >
+          {/* Content centered, moved by pan, scaled by zoom */}
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+            transformOrigin: 'center center',
+          }}>
+            {roots.length === 1 ? (
+              <OrgChartNode member={roots[0]} childrenMap={childrenMap} currentUserId={currentUser.id} />
+            ) : (
+              <div className="flex items-start gap-6">
+                {roots.map(root => (
+                  <OrgChartNode key={root.id} member={root} childrenMap={childrenMap} currentUserId={currentUser.id} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -6076,25 +6115,20 @@ function WorkTab({ currentUser }) {
       {section === 'team' && (
         <div className="space-y-3">
 
-          {/* View toggle */}
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{org.name}</p>
-            <div className="flex bg-slate-800/70 rounded-lg p-0.5 border border-slate-700/40">
-              {[
-                { id: 'list',  label: 'List'  },
-                { id: 'chart', label: 'Chart' },
-              ].map(v => (
-                <button key={v.id} onClick={() => setTeamView(v.id)}
-                  className={`px-3 py-1 rounded-md text-[10px] font-semibold transition-all ${
-                    teamView === v.id ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}>{v.label}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Chart view */}
+          {/* Chart view — full-page fixed overlay, hides behind nav/footer */}
           {teamView === 'chart' && (
-            <OrgChartView orgInfo={orgInfo} currentUser={currentUser} />
+            <OrgChartView orgInfo={orgInfo} currentUser={currentUser} onClose={() => setTeamView('list')} />
+          )}
+
+          {/* Header row — org name + Chart toggle (only visible in list mode) */}
+          {teamView === 'list' && (
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{org.name}</p>
+              <button onClick={() => setTeamView('chart')}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition-colors">
+                <LayoutGrid className="h-3 w-3" /> Org Chart
+              </button>
+            </div>
           )}
 
           {/* List view */}
