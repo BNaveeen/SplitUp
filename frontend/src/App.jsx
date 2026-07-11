@@ -508,6 +508,7 @@ export default function App() {
 
   const [authView, setAuthView] = useState('login') // 'login' | 'verify' | 'forgot' | 'reset'
   const [pendingEmail, setPendingEmail] = useState('')
+  const [pendingDevOtp, setPendingDevOtp] = useState(null)
 
   if (!user) return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -515,20 +516,20 @@ export default function App() {
         {authView === 'login' && (
           <LoginScreen key="login" onLogin={handleLogin}
             onForgotPassword={() => setAuthView('forgot')}
-            onVerifyEmail={email => { setPendingEmail(email); setAuthView('verify') }} />
+            onVerifyEmail={(email, devOtp) => { setPendingEmail(email); setPendingDevOtp(devOtp || null); setAuthView('verify') }} />
         )}
         {authView === 'verify' && (
-          <VerifyEmailView key="verify" email={pendingEmail}
+          <VerifyEmailView key="verify" email={pendingEmail} devOtp={pendingDevOtp}
             onVerified={resp => { handleLogin(resp); setAuthView('login') }}
             onBack={() => setAuthView('login')} />
         )}
         {authView === 'forgot' && (
           <ForgotPasswordView key="forgot"
-            onOtpSent={email => { setPendingEmail(email); setAuthView('reset') }}
+            onOtpSent={(email, devOtp) => { setPendingEmail(email); setPendingDevOtp(devOtp || null); setAuthView('reset') }}
             onBack={() => setAuthView('login')} />
         )}
         {authView === 'reset' && (
-          <ResetPasswordView key="reset" email={pendingEmail}
+          <ResetPasswordView key="reset" email={pendingEmail} devOtp={pendingDevOtp}
             onReset={() => setAuthView('login')}
             onBack={() => setAuthView('login')} />
         )}
@@ -566,7 +567,7 @@ function LoginScreen({ onLogin, onForgotPassword, onVerifyEmail }) {
         ? await loginUser(normalizedEmail, password)
         : await registerUser(name.trim(), normalizedEmail, password)
       if (resp.message === 'verification_required') {
-        onVerifyEmail(resp.email)
+        onVerifyEmail(resp.email, resp.dev_otp || null)
       } else {
         onLogin(resp)
       }
@@ -658,12 +659,20 @@ function LoginScreen({ onLogin, onForgotPassword, onVerifyEmail }) {
 }
 
 // ── Email Verification ────────────────────────────────────────────────────────
-function VerifyEmailView({ email, onVerified, onBack }) {
+function VerifyEmailView({ email, onVerified, onBack, devOtp }) {
   const [otp, setOtp] = useState('')
   const [loading, setLoading] = useState(false)
   const [resending, setResending] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [shownOtp, setShownOtp] = useState(devOtp || null)
+  const [countdown, setCountdown] = useState(devOtp ? 10 : 0)
+
+  useEffect(() => {
+    if (!shownOtp || countdown <= 0) { if (shownOtp && countdown <= 0) setShownOtp(null); return }
+    const t = setTimeout(() => setCountdown(c => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [shownOtp, countdown])
 
   const handleVerify = async (e) => {
     e.preventDefault()
@@ -678,8 +687,9 @@ function VerifyEmailView({ email, onVerified, onBack }) {
   const handleResend = async () => {
     setResending(true); setError(''); setSuccess('')
     try {
-      await resendVerification(email)
-      setSuccess('OTP resent — check your inbox')
+      const resp = await resendVerification(email)
+      if (resp?.dev_otp) { setShownOtp(resp.dev_otp); setCountdown(10) }
+      setSuccess(resp?.dev_otp ? 'Code generated — see below' : 'OTP resent — check your inbox')
     } catch (err) { setError(err.message) }
     finally { setResending(false) }
   }
@@ -696,7 +706,13 @@ function VerifyEmailView({ email, onVerified, onBack }) {
             </div>
           </div>
           <h2 className="text-2xl font-bold text-center text-slate-100 mb-1">Verify your email</h2>
-          <p className="text-slate-400 text-center text-sm mb-6">We sent a 6-digit code to<br /><span className="text-indigo-400 font-medium">{email}</span></p>
+          <p className="text-slate-400 text-center text-sm mb-4">We sent a 6-digit code to<br /><span className="text-indigo-400 font-medium">{email}</span></p>
+          {shownOtp && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-center mb-4">
+              <p className="text-[10px] text-amber-500/80 font-bold uppercase tracking-widest mb-1">Dev — No SMTP · hides in {countdown}s</p>
+              <p className="text-2xl font-mono font-bold text-amber-300 tracking-[0.4em]">{shownOtp}</p>
+            </div>
+          )}
           <form onSubmit={handleVerify} className="space-y-4">
             <input type="text" inputMode="numeric" maxLength={6} required value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g,''))}
               className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-600"
@@ -730,8 +746,8 @@ function ForgotPasswordView({ onOtpSent, onBack }) {
     e.preventDefault()
     setLoading(true); setError('')
     try {
-      await forgotPassword(email.trim().toLowerCase())
-      onOtpSent(email.trim().toLowerCase())
+      const resp = await forgotPassword(email.trim().toLowerCase())
+      onOtpSent(email.trim().toLowerCase(), resp?.dev_otp || null)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
   }
@@ -769,12 +785,20 @@ function ForgotPasswordView({ onOtpSent, onBack }) {
 }
 
 // ── Reset Password ────────────────────────────────────────────────────────────
-function ResetPasswordView({ email, onReset, onBack }) {
+function ResetPasswordView({ email, onReset, onBack, devOtp }) {
   const [otp, setOtp] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [shownOtp, setShownOtp] = useState(devOtp || null)
+  const [countdown, setCountdown] = useState(devOtp ? 10 : 0)
+
+  useEffect(() => {
+    if (!shownOtp || countdown <= 0) { if (shownOtp && countdown <= 0) setShownOtp(null); return }
+    const t = setTimeout(() => setCountdown(c => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [shownOtp, countdown])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -800,7 +824,13 @@ function ResetPasswordView({ email, onReset, onBack }) {
             </div>
           </div>
           <h2 className="text-2xl font-bold text-center text-slate-100 mb-1">Reset password</h2>
-          <p className="text-slate-400 text-center text-sm mb-6">Enter the code sent to <span className="text-indigo-400 font-medium">{email}</span></p>
+          <p className="text-slate-400 text-center text-sm mb-4">Enter the code sent to <span className="text-indigo-400 font-medium">{email}</span></p>
+          {shownOtp && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-center mb-4">
+              <p className="text-[10px] text-amber-500/80 font-bold uppercase tracking-widest mb-1">Dev — No SMTP · hides in {countdown}s</p>
+              <p className="text-2xl font-mono font-bold text-amber-300 tracking-[0.4em]">{shownOtp}</p>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <input type="text" inputMode="numeric" maxLength={6} required value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g,''))}
               className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-100 placeholder-slate-600"
@@ -8383,8 +8413,16 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
   const [otp, setOtp]             = useState('')
   const [busy, setBusy]           = useState(false)
   const [err, setErr]             = useState('')
+  const [devOtp, setDevOtp]       = useState(null)
+  const [devOtpCd, setDevOtpCd]   = useState(0)
 
-  const reset = () => { setAdding(false); setNewEmail(''); setOtpSent(false); setOtp(''); setErr('') }
+  useEffect(() => {
+    if (!devOtp || devOtpCd <= 0) { if (devOtp && devOtpCd <= 0) setDevOtp(null); return }
+    const t = setTimeout(() => setDevOtpCd(c => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [devOtp, devOtpCd])
+
+  const reset = () => { setAdding(false); setNewEmail(''); setOtpSent(false); setOtp(''); setErr(''); setDevOtp(null); setDevOtpCd(0) }
 
   const domainOk = (email) => {
     if (!domain || emailType !== 'work') return true
@@ -8400,7 +8438,8 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
     }
     setBusy(true); setErr('')
     try {
-      await linkEmail(userId, emailType, newEmail.trim())
+      const resp = await linkEmail(userId, emailType, newEmail.trim())
+      if (resp?.dev_otp) { setDevOtp(resp.dev_otp); setDevOtpCd(10) }
       setOtpSent(true)
     } catch (e) { setErr(e.message) }
     finally { setBusy(false) }
@@ -8474,6 +8513,12 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
           ) : (
             <div className="space-y-2">
               <p className="text-xs text-slate-400">Code sent to <span className="text-slate-200 font-medium">{newEmail}</span></p>
+              {devOtp && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-2.5 text-center">
+                  <p className="text-[10px] text-amber-500/80 font-bold uppercase tracking-widest mb-0.5">Dev — No SMTP · hides in {devOtpCd}s</p>
+                  <p className="text-xl font-mono font-bold text-amber-300 tracking-[0.3em]">{devOtp}</p>
+                </div>
+              )}
               <div className="flex gap-2">
                 <input type="text" value={otp} onChange={e => setOtp(e.target.value)} maxLength={6}
                   placeholder="6-digit code"
