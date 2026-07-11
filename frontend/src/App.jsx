@@ -8829,7 +8829,7 @@ function ProfileModal({ user, onClose, onSave, userPlan = { plan: 'free', featur
                         <CheckCircle2 className="h-3 w-3" /> Primary
                       </span>
                     </div>
-                    {!workMode && liveUser.organisation_id && (
+                    {!workMode && (
                       <LinkedEmailRow userId={liveUser.id} emailType="work"
                         currentEmail={liveUser.work_email} isVerified={liveUser.work_email_verified}
                         domain={liveUser.organisation_domain}
