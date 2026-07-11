@@ -8,7 +8,7 @@ import {
   Edit2, Trash2, Settings, MessageSquare, Bell, Crown, Shield, UserMinus, UserX,
   KeyRound, ShieldCheck, BarChart2, Download, Tag, Zap, CreditCard, FileText,
   Moon, Sun, Briefcase, Building2, ClipboardList, ChevronDown, AlertCircle, Clock, Inbox,
-  LayoutDashboard, Pencil, Lock, AlertTriangle, Camera, Upload, Sparkles
+  LayoutDashboard, Pencil, Lock, AlertTriangle, Camera, Upload, Sparkles, Link2
 } from 'lucide-react'
 import {
   fetchUsers, fetchUserGroups, fetchGroupExpenses, fetchGroupBalances,
@@ -8410,6 +8410,7 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
   const [adding, setAdding]       = useState(false)
   const [newEmail, setNewEmail]   = useState('')
   const [otpSent, setOtpSent]     = useState(false)
+  const [isInterlink, setIsInterlink] = useState(false)
   const [otp, setOtp]             = useState('')
   const [busy, setBusy]           = useState(false)
   const [err, setErr]             = useState('')
@@ -8422,7 +8423,7 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
     return () => clearTimeout(t)
   }, [devOtp, devOtpCd])
 
-  const reset = () => { setAdding(false); setNewEmail(''); setOtpSent(false); setOtp(''); setErr(''); setDevOtp(null); setDevOtpCd(0) }
+  const reset = () => { setAdding(false); setNewEmail(''); setOtpSent(false); setIsInterlink(false); setOtp(''); setErr(''); setDevOtp(null); setDevOtpCd(0) }
 
   const domainOk = (email) => {
     if (!domain || emailType !== 'work') return true
@@ -8444,6 +8445,7 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
     try {
       const resp = await linkEmail(userId, emailType, newEmail.trim())
       if (resp?.dev_otp) { setDevOtp(resp.dev_otp); setDevOtpCd(10) }
+      if (resp?.message === 'otp_sent_interlink') setIsInterlink(true)
       setOtpSent(true)
     } catch (e) { setErr(e.message) }
     finally { setBusy(false) }
@@ -8516,7 +8518,14 @@ function LinkedEmailRow({ userId, emailType, currentEmail, isVerified, onUpdate,
             </div>
           ) : (
             <div className="space-y-2">
-              <p className="text-xs text-slate-400">Code sent to <span className="text-slate-200 font-medium">{newEmail}</span></p>
+              {isInterlink ? (
+                <p className="text-xs text-amber-400/90 flex items-center gap-1">
+                  <Link2 className="h-3 w-3 shrink-0" />
+                  This email belongs to an existing account — verify to link your accounts and import your organisation details.
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400">Code sent to <span className="text-slate-200 font-medium">{newEmail}</span></p>
+              )}
               {devOtp && (
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-2.5 text-center">
                   <p className="text-[10px] text-amber-500/80 font-bold uppercase tracking-widest mb-0.5">Dev — No SMTP · hides in {devOtpCd}s</p>
