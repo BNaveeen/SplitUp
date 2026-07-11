@@ -32,6 +32,7 @@ import {
   addExpenseToReport, removeExpenseFromReport, addReportItem, updateReportItem, deleteReportItem,
   fetchMyApprovals, approveReport, rejectReport, reimburseReport,
   linkEmail, verifyLinkedEmail, unlinkEmail,
+  adminSendTestEmail, adminExportCSV,
 } from './api'
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -2732,6 +2733,454 @@ function GroupDetailView({ group, currentUser, allUsers, allGroups, onBack, onGr
   )
 }
 
+// ── Integration Services Tab ──────────────────────────────────────────────────
+function IntegrationsTab({ integrationSettings, onSaved }) {
+  const [totpEnforcement, setTotpEnforcement] = useState(integrationSettings?.totp_enforcement || 'disabled')
+  const [totpSaving,  setTotpSaving]  = useState(false)
+  const [totpSaved,   setTotpSaved]   = useState(false)
+  const [testAddress, setTestAddress] = useState('')
+  const [emailTesting, setEmailTesting] = useState(false)
+  const [emailTestResult, setEmailTestResult] = useState(null) // null | 'sent' | 'error'
+  const [exporting,   setExporting]   = useState(null)
+  const [openRoadmap, setOpenRoadmap] = useState({})
+
+  // Sync enforcement from parent when settings load
+  useEffect(() => {
+    if (integrationSettings?.totp_enforcement) setTotpEnforcement(integrationSettings.totp_enforcement)
+  }, [integrationSettings])
+
+  const toggleRoadmap = id => setOpenRoadmap(s => ({ ...s, [id]: !s[id] }))
+
+  const saveTOTP = async () => {
+    setTotpSaving(true)
+    try {
+      await updateAppSettings({ totp_enforcement: totpEnforcement })
+      setTotpSaved(true); setTimeout(() => setTotpSaved(false), 2500)
+      if (onSaved) onSaved()
+    } catch (e) { alert(e.message) }
+    finally { setTotpSaving(false) }
+  }
+
+  const runExport = async (type) => {
+    setExporting(type)
+    try { await adminExportCSV(type) }
+    catch (e) { alert(`Export failed: ${e.message}`) }
+    finally { setExporting(null) }
+  }
+
+  const sendTestEmail = async () => {
+    if (!testAddress) return
+    setEmailTesting(true); setEmailTestResult(null)
+    try { await adminSendTestEmail(testAddress); setEmailTestResult('sent') }
+    catch (e) { setEmailTestResult('error') }
+    finally { setEmailTesting(false) }
+  }
+
+  const Badge = ({ status }) => {
+    const cfg = {
+      active:    { text: 'Active',      cls: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400' },
+      available: { text: 'Available',   cls: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
+      coming:    { text: 'Coming Soon', cls: 'bg-amber-500/10 border-amber-500/20 text-amber-400' },
+      planned:   { text: 'Planned',     cls: 'bg-slate-800/80 border-slate-700/50 text-slate-500' },
+    }[status]
+    return <span className={`text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border ${cfg.cls}`}>{cfg.text}</span>
+  }
+
+  const RoadmapPanel = ({ id, phases }) => (
+    <div className="mt-3 pt-3 border-t border-slate-800/50">
+      <button onClick={() => toggleRoadmap(id)}
+        className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors">
+        <Sparkles className="h-3 w-3" /> Roadmap
+        <ChevronDown className={`h-3 w-3 transition-transform ${openRoadmap[id] ? 'rotate-180' : ''}`} />
+      </button>
+      {openRoadmap[id] && (
+        <div className="mt-2 rounded-xl bg-slate-800/50 border border-slate-700/30 p-3 space-y-3">
+          {phases.map(p => (
+            <div key={p.phase}>
+              <p className={`text-[10px] font-bold mb-1.5 ${p.color}`}>{p.phase}</p>
+              <ul className="space-y-1">
+                {p.items.map(item => (
+                  <li key={item} className="flex gap-1.5 text-[10px] text-slate-400 leading-snug">
+                    <span className="text-slate-600 mt-0.5 shrink-0">·</span>{item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
+  const SectionHeading = ({ title, sub }) => (
+    <div className="mb-4">
+      <h3 className="font-bold text-white text-sm">{title}</h3>
+      {sub && <p className="text-[11px] text-slate-500 mt-0.5">{sub}</p>}
+    </div>
+  )
+
+  const PlannedCard = ({ icon: Icon, name, sub, desc, badgeStatus, id, phases }) => (
+    <div className="rounded-2xl border border-slate-800/40 bg-slate-900/20 p-4 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg bg-slate-800/70 border border-slate-700/30 flex items-center justify-center shrink-0">
+            <Icon className="h-4 w-4 text-slate-500" />
+          </div>
+          <div>
+            <p className="font-semibold text-slate-400 text-sm">{name}</p>
+            <p className="text-[10px] text-slate-600">{sub}</p>
+          </div>
+        </div>
+        <Badge status={badgeStatus} />
+      </div>
+      <p className="text-[11px] text-slate-500 leading-relaxed">{desc}</p>
+      {phases && <RoadmapPanel id={id} phases={phases} />}
+    </div>
+  )
+
+  return (
+    <div className="space-y-10 max-w-3xl">
+
+      {/* ── Header ── */}
+      <div className="flex items-start gap-3.5">
+        <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-900/40">
+          <Sparkles className="h-5 w-5 text-white" />
+        </div>
+        <div>
+          <h2 className="font-bold text-white text-lg leading-tight">Integration Services</h2>
+          <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+            Configure authentication, data pipelines, and third-party service connections.<br />
+            Active services are live. "Coming Soon" are in the build queue. "Planned" are on the roadmap.
+          </p>
+        </div>
+      </div>
+
+      {/* ══ 1. Auth & Security ══ */}
+      <section>
+        <SectionHeading title="Authentication & Security" sub="Control how users verify their identity and access the platform." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {/* TOTP / 2FA */}
+          <div className="rounded-2xl border border-slate-800/60 bg-slate-900/40 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-800/40">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-lg bg-indigo-500/15 border border-indigo-500/20 flex items-center justify-center shrink-0">
+                    <Shield className="h-4 w-4 text-indigo-400" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white text-sm">Two-Factor Auth (2FA)</p>
+                    <p className="text-[10px] text-slate-500">TOTP — RFC 6238</p>
+                  </div>
+                </div>
+                <Badge status="active" />
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Time-based one-time passwords. Compatible with Google Authenticator, Authy, Microsoft Authenticator, Bitwarden, 1Password, and any TOTP app.
+              </p>
+            </div>
+
+            <div className="p-4 space-y-3 flex-1">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Enforcement Mode</label>
+                <div className="flex gap-1.5">
+                  {[
+                    { id: 'disabled', label: 'Off',      desc: '2FA not used' },
+                    { id: 'optional', label: 'Optional', desc: 'User choice' },
+                    { id: 'required', label: 'Required', desc: 'All users' },
+                  ].map(m => (
+                    <button key={m.id} onClick={() => setTotpEnforcement(m.id)}
+                      className={`flex-1 py-2 rounded-xl border text-center transition-all ${
+                        totpEnforcement === m.id
+                          ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                          : 'bg-slate-800/60 border-slate-700/40 text-slate-500 hover:text-slate-300'
+                      }`}>
+                      <span className="block text-[10px] font-bold">{m.label}</span>
+                      <span className="block text-[9px] opacity-70 mt-0.5">{m.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/15 p-3 text-[10px] text-slate-400 leading-relaxed">
+                {totpEnforcement === 'disabled' && '2FA is turned off. Users log in with password only.'}
+                {totpEnforcement === 'optional' && 'Users can enable 2FA in their account settings. Recommended for personal accounts.'}
+                {totpEnforcement === 'required' && 'All users must enrol a TOTP app before accessing the platform. Best for corporate orgs.'}
+              </div>
+
+              <button onClick={saveTOTP} disabled={totpSaving}
+                className={`w-full py-2 rounded-xl border text-xs font-bold transition-all ${
+                  totpSaved
+                    ? 'bg-emerald-500/15 border-emerald-500/25 text-emerald-400'
+                    : 'bg-indigo-500/15 border-indigo-500/25 text-indigo-300 hover:bg-indigo-500/25'
+                }`}>
+                {totpSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mx-auto" /> : totpSaved ? '✓ Saved' : 'Save Setting'}
+              </button>
+            </div>
+
+            <div className="px-4 pb-4">
+              <RoadmapPanel id="totp" phases={[
+                { phase: 'Phase 0 — Current', color: 'text-emerald-400', items: ['TOTP (RFC 6238) standard in place', 'Works with Google Authenticator, Authy, 1Password, Bitwarden', 'Enforcement toggle: off / optional / required'] },
+                { phase: 'Phase 1 — Enrolment UX', color: 'text-amber-400', items: ['Per-user QR-code setup flow in account settings', 'Backup recovery codes (10 single-use codes)', 'Admin enrolment-status dashboard + CSV report'] },
+                { phase: 'Phase 2 — More Factors', color: 'text-blue-400', items: ['SMS OTP via Twilio (configure SID + Auth Token)', 'Push-notification 2FA via Duo Security API', 'Per-org enforcement policies (override global)'] },
+                { phase: 'Phase 3 — Enterprise', color: 'text-violet-400', items: ['Hardware security keys — FIDO2 / WebAuthn / YubiKey', 'Risk-based auth (anomalous IP / new device challenge)', 'Immutable audit log for every auth event (SOC 2 ready)'] },
+              ]} />
+            </div>
+          </div>
+
+          {/* SSO */}
+          <PlannedCard
+            icon={KeyRound} name="SSO / OAuth 2.0" sub="Single Sign-On" badgeStatus="coming"
+            desc="Google OAuth, Microsoft Azure AD, GitHub, and SAML 2.0 for enterprise SSO. Let users sign in with their company identity provider."
+            id="sso"
+            phases={[
+              { phase: 'Phase 1 — Social Login', color: 'text-amber-400', items: ['Google OAuth 2.0 (personal + Workspace)', 'GitHub OAuth', 'Microsoft personal accounts'] },
+              { phase: 'Phase 2 — Business IdP', color: 'text-blue-400', items: ['Microsoft Azure AD / Entra ID', 'SAML 2.0 (Okta, OneLogin, Ping Identity)', 'SCIM user provisioning + de-provisioning'] },
+              { phase: 'Phase 3 — Enterprise', color: 'text-violet-400', items: ['Just-in-time (JIT) provisioning from IdP', 'Custom OIDC endpoints', 'Domain lock — org users must use IdP'] },
+            ]}
+          />
+        </div>
+      </section>
+
+      {/* ══ 2. Email & Notifications ══ */}
+      <section>
+        <SectionHeading title="Email & Notifications" sub="Configure outbound messaging, alerts, and team communication channels." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {/* Email service */}
+          <div className="rounded-2xl border border-slate-800/60 bg-slate-900/40 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-800/40">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-lg bg-amber-500/15 border border-amber-500/20 flex items-center justify-center shrink-0">
+                    <Mail className="h-4 w-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white text-sm">Email Service</p>
+                    <p className="text-[10px] text-slate-500">Built-in SMTP</p>
+                  </div>
+                </div>
+                <Badge status="active" />
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Sends OTP codes, password resets, expense notifications, and report approvals via a configured SMTP server.
+              </p>
+            </div>
+
+            <div className="p-4 space-y-3 flex-1">
+              <div className="rounded-xl bg-slate-800/50 border border-slate-700/30 p-3 space-y-1.5">
+                {[
+                  { k: 'Provider',    v: 'SMTP (smtplib)' },
+                  { k: 'Default host', v: 'smtp.gmail.com:587' },
+                  { k: 'Auth',        v: 'SMTP_USER + SMTP_PASS env vars' },
+                  { k: 'TLS',         v: 'STARTTLS required' },
+                ].map(r => (
+                  <div key={r.k} className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-500">{r.k}</span>
+                    <span className="text-[10px] text-slate-300 font-mono">{r.v}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Send Test Email</label>
+                <div className="flex gap-2">
+                  <input value={testAddress} onChange={e => setTestAddress(e.target.value)}
+                    placeholder="recipient@example.com" type="email"
+                    className="flex-1 bg-slate-800/60 border border-slate-700/40 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50" />
+                  <button onClick={sendTestEmail} disabled={emailTesting || !testAddress}
+                    className="px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/20 text-amber-400 text-xs font-bold hover:bg-amber-500/25 disabled:opacity-40 transition-all shrink-0">
+                    {emailTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Send'}
+                  </button>
+                </div>
+                {emailTestResult === 'sent'  && <p className="text-[10px] text-emerald-400 mt-1.5 flex items-center gap-1"><CheckCircle className="h-3 w-3" /> Test email delivered.</p>}
+                {emailTestResult === 'error' && <p className="text-[10px] text-red-400 mt-1.5 flex items-center gap-1"><AlertCircle className="h-3 w-3" /> Failed — check SMTP_USER / SMTP_PASS env vars.</p>}
+              </div>
+            </div>
+
+            <div className="px-4 pb-4">
+              <RoadmapPanel id="email" phases={[
+                { phase: 'Phase 0 — Current', color: 'text-emerald-400', items: ['Built-in smtplib (Python stdlib)', 'Sends OTP, password reset, notifications', 'Works with Gmail/Google Workspace SMTP'] },
+                { phase: 'Phase 1 — Provider Swap', color: 'text-amber-400', items: ['Resend or SendGrid API integration', 'Email open/click analytics dashboard', 'HTML template editor in admin panel'] },
+                { phase: 'Phase 2 — Scale', color: 'text-blue-400', items: ['Mailgun with dedicated sending domain', 'AWS SES for high-volume orgs', 'Bounce + unsubscribe handling (suppression list)'] },
+                { phase: 'Phase 3 — Enterprise', color: 'text-violet-400', items: ['Per-org white-label email branding', 'Custom sending domain wizard (MX + DKIM + DMARC)', 'GDPR email-audit log'] },
+              ]} />
+            </div>
+          </div>
+
+          {/* Webhooks / Comms */}
+          <PlannedCard
+            icon={Send} name="Webhooks & Messaging" sub="Slack · Teams · Custom" badgeStatus="coming"
+            desc="Post real-time events (new expense, approval, settlement) to Slack channels, Microsoft Teams, or any custom webhook URL."
+            id="webhooks"
+            phases={[
+              { phase: 'Phase 1 — Notifications', color: 'text-amber-400', items: ['Slack incoming webhooks (per-org config)', 'Microsoft Teams connector', 'Generic HTTP webhook with HMAC signature'] },
+              { phase: 'Phase 2 — Events', color: 'text-blue-400', items: ['Event selector: choose which events trigger each hook', 'Retry queue with exponential back-off', 'Webhook delivery log in admin panel'] },
+              { phase: 'Phase 3 — Enterprise', color: 'text-violet-400', items: ['PagerDuty integration for critical alerts', 'Push notifications (FCM + APNs)', 'Zapier / Make (Integromat) connector'] },
+            ]}
+          />
+        </div>
+      </section>
+
+      {/* ══ 3. Data & API ══ */}
+      <section>
+        <SectionHeading title="Data & API" sub="Export data, build on top of SplitUp, or stream events to other systems." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {/* CSV Export */}
+          <div className="rounded-2xl border border-slate-800/60 bg-slate-900/40 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-800/40">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-lg bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                    <Download className="h-4 w-4 text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white text-sm">Data Export</p>
+                    <p className="text-[10px] text-slate-500">CSV download</p>
+                  </div>
+                </div>
+                <Badge status="available" />
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                One-click CSV exports of all platform data. UTF-8 with BOM for Excel compatibility.
+              </p>
+            </div>
+
+            <div className="p-4 space-y-2 flex-1">
+              {[
+                { type: 'users',       label: 'Users',       desc: 'ID, name, email, roles, org, department', color: 'indigo' },
+                { type: 'expenses',    label: 'Expenses',    desc: 'Description, amount, currency, date, group', color: 'amber' },
+                { type: 'settlements', label: 'Settlements', desc: 'Payer, payee, amount, status, dates', color: 'emerald' },
+              ].map(ex => (
+                <button key={ex.type} onClick={() => runExport(ex.type)}
+                  disabled={exporting === ex.type}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
+                    exporting === ex.type
+                      ? 'bg-slate-800/40 border-slate-700/30 opacity-60'
+                      : 'bg-slate-800/50 border-slate-700/40 hover:border-slate-600/60 hover:bg-slate-800/70'
+                  }`}>
+                  {exporting === ex.type
+                    ? <Loader2 className="h-3.5 w-3.5 text-slate-400 animate-spin shrink-0" />
+                    : <Download className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  }
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-slate-200">{ex.label} <span className="text-slate-500 font-normal text-[10px]">(.csv)</span></p>
+                    <p className="text-[9px] text-slate-600 truncate">{ex.desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="px-4 pb-4">
+              <RoadmapPanel id="export" phases={[
+                { phase: 'Phase 0 — Current', color: 'text-emerald-400', items: ['Admin CSV export: Users, Expenses, Settlements', 'UTF-8 BOM for Excel compatibility', 'Triggered manually in admin panel'] },
+                { phase: 'Phase 1 — Scheduled', color: 'text-amber-400', items: ['Scheduled exports (daily/weekly/monthly)', 'Email delivery of export to nominated address', 'Date-range filter + org/group scope'] },
+                { phase: 'Phase 2 — API', color: 'text-blue-400', items: ['REST API with per-app API keys (read-only / full)', 'JSON + CSV response format selector', 'OpenAPI 3.1 spec + interactive docs at /api/docs'] },
+                { phase: 'Phase 3 — Streaming', color: 'text-violet-400', items: ['Webhook event stream (expense.created, report.approved…)', 'Direct S3 / GCS bucket delivery', 'Kafka / Kinesis for real-time pipelines'] },
+              ]} />
+            </div>
+          </div>
+
+          {/* REST API */}
+          <PlannedCard
+            icon={KeyRound} name="REST API Access" sub="Programmatic access" badgeStatus="coming"
+            desc="Full REST API with per-application API keys, scoped permissions, and rate limiting. Build custom integrations and automate workflows."
+            id="api"
+            phases={[
+              { phase: 'Phase 1 — API Keys', color: 'text-amber-400', items: ['Per-user / per-org API key generation in admin', 'Key scopes: read-only, expenses, settlements, full', 'Rate limiting: 100 req/min by default, configurable'] },
+              { phase: 'Phase 2 — SDK', color: 'text-blue-400', items: ['Official Python + JavaScript SDKs', 'Interactive API explorer at /api/docs (Swagger)', 'Sandbox environment with test data'] },
+              { phase: 'Phase 3 — Enterprise', color: 'text-violet-400', items: ['Dedicated API gateway with per-org quotas', 'IP allowlist for API keys', 'GraphQL endpoint option'] },
+            ]}
+          />
+        </div>
+      </section>
+
+      {/* ══ 4. Storage & Files ══ */}
+      <section>
+        <SectionHeading title="Storage & File Handling" sub="Attach receipts and documents to expenses." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <PlannedCard
+            icon={Upload} name="File Storage" sub="Receipt attachments" badgeStatus="planned"
+            desc="Upload receipts, invoices, and supporting documents directly to expenses and reports."
+            id="storage"
+            phases={[
+              { phase: 'Phase 1 — Local', color: 'text-amber-400', items: ['File upload to server disk', 'Max 5 MB per attachment, 10 per report', 'MIME type allowlist (PDF, JPG, PNG, HEIC)'] },
+              { phase: 'Phase 2 — Cloud', color: 'text-blue-400', items: ['AWS S3 or Cloudflare R2 (configure bucket in admin)', 'Image compression on upload', 'Pre-signed URL serving (no server bandwidth)'] },
+              { phase: 'Phase 3 — Intelligence', color: 'text-violet-400', items: ['OCR receipt parsing (extract amount/vendor/date)', 'Auto-fill expense from receipt photo', 'Google Drive / OneDrive connector'] },
+            ]}
+          />
+          <PlannedCard
+            icon={BarChart2} name="Reporting & Analytics" sub="Business intelligence" badgeStatus="planned"
+            desc="Embedded analytics dashboards: spend by category, department, team member, and time period."
+            id="analytics"
+            phases={[
+              { phase: 'Phase 1 — Reports', color: 'text-amber-400', items: ['Spend by category chart in admin overview', 'Department budget utilisation report', 'Monthly trend report (CSV + chart)'] },
+              { phase: 'Phase 2 — BI', color: 'text-blue-400', items: ['Metabase or Redash embed option', 'Custom report builder in org admin panel', 'Scheduled PDF report emails to managers'] },
+              { phase: 'Phase 3 — AI', color: 'text-violet-400', items: ['Anomaly detection (unusual spend patterns)', 'Budget forecast using historical data', 'Natural-language query: "Show me Q3 travel spend"'] },
+            ]}
+          />
+        </div>
+      </section>
+
+      {/* ══ 5. Payments & Billing ══ */}
+      <section>
+        <SectionHeading title="Payments & Billing" sub="In-app payment processing and subscription management." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <PlannedCard
+            icon={CreditCard} name="Stripe Payments" sub="In-app settlement" badgeStatus="planned"
+            desc="Process real money settlements between users. Pay debts directly inside SplitUp without leaving the app."
+            id="stripe"
+            phases={[
+              { phase: 'Phase 1 — Card Payments', color: 'text-amber-400', items: ['Stripe Checkout for settling debts', 'Saved payment methods per user', 'Settlement-to-bank (ACH / BACS / SEPA)'] },
+              { phase: 'Phase 2 — Subscriptions', color: 'text-blue-400', items: ['Stripe Billing for SplitUp plans (replace manual)', 'Proration on mid-cycle plan changes', 'Invoice PDF generation and email delivery'] },
+              { phase: 'Phase 3 — Platform', color: 'text-violet-400', items: ['Stripe Connect for org reimbursements', 'Corporate card reconciliation (Stripe Issuing)', 'Multi-currency support with live FX rates'] },
+            ]}
+          />
+          <PlannedCard
+            icon={Crown} name="Subscription Management" sub="Plan & billing admin" badgeStatus="coming"
+            desc="Fully automated plan management: upgrades, downgrades, prorations, dunning, and usage-based billing."
+            id="billing"
+            phases={[
+              { phase: 'Phase 1 — Self-Serve', color: 'text-amber-400', items: ['Upgrade/downgrade from in-app settings', 'Stripe Customer Portal link for invoice history', 'Automatic renewal email reminders'] },
+              { phase: 'Phase 2 — Enterprise Billing', color: 'text-blue-400', items: ['Annual contracts with PO number support', 'Net-30 / Net-60 invoice terms', 'Seat-based billing for org plans'] },
+              { phase: 'Phase 3 — Usage', color: 'text-violet-400', items: ['Usage-based add-ons (API calls, storage GB)', 'Volume discounts via Stripe Prices', 'Consolidated billing for multi-org customers'] },
+            ]}
+          />
+        </div>
+      </section>
+
+      {/* ══ 6. Compliance & Security ══ */}
+      <section>
+        <SectionHeading title="Compliance & Security" sub="Data protection, audit trails, and regulatory requirements." />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <PlannedCard
+            icon={ShieldCheck} name="GDPR / Data Privacy" sub="Data subject rights" badgeStatus="planned"
+            desc="Right to erasure, data portability, consent management, and DPA (Data Processing Agreement) tooling."
+            id="gdpr"
+            phases={[
+              { phase: 'Phase 1 — Basics', color: 'text-amber-400', items: ['User account deletion (cascade wipe)', 'Data export on user request (JSON)', 'Cookie consent banner + preferences'] },
+              { phase: 'Phase 2 — Compliance', color: 'text-blue-400', items: ['DPA template generation for B2B customers', 'Data retention policies (auto-delete after N days)', 'Processing log for GDPR Article 30'] },
+              { phase: 'Phase 3 — Certifications', color: 'text-violet-400', items: ['SOC 2 Type II audit readiness', 'ISO 27001 control mapping', 'Penetration test report (annual)'] },
+            ]}
+          />
+          <PlannedCard
+            icon={Lock} name="Audit Logging" sub="Immutable event trail" badgeStatus="planned"
+            desc="Immutable log of every admin action, auth event, data change, and API call for security investigations and compliance."
+            id="audit"
+            phases={[
+              { phase: 'Phase 1 — Admin Actions', color: 'text-amber-400', items: ['Log all admin panel operations (who/what/when)', 'Log failed login attempts + lockout events', 'Searchable log in admin panel with date filters'] },
+              { phase: 'Phase 2 — Full Coverage', color: 'text-blue-400', items: ['Every expense create/edit/delete logged', 'Settlement approve/reject trail', 'API key usage log'] },
+              { phase: 'Phase 3 — SIEM', color: 'text-violet-400', items: ['Forward to Splunk / Datadog / Elastic SIEM', 'Tamper-evident log (hash chaining)', 'Real-time alert on suspicious patterns'] },
+            ]}
+          />
+        </div>
+      </section>
+
+    </div>
+  )
+}
+
 // ── Admin Dashboard ───────────────────────────────────────────────────────────
 function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [activeTab, setActiveTab]           = useState('overview')
@@ -2778,17 +3227,20 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
   const [trialSettings, setTrialSettings]   = useState(null)
   const [trialStats, setTrialStats]         = useState(null)
   const [trialSaving, setTrialSaving]       = useState(false)
+  // Integration Services state
+  const [integrationSettings, setIntegrationSettings] = useState(null)
 
   const TABS = [
-    { id: 'overview',       label: 'Overview',  full: 'Overview',      icon: LayoutGrid },
-    { id: 'users',          label: 'Users',     full: 'Users',         icon: Users },
-    { id: 'groups',         label: 'Groups',    full: 'Groups',        icon: Home },
-    { id: 'expenses',       label: 'Expenses',  full: 'Expenses',      icon: Receipt },
-    { id: 'settlements',    label: 'Settle',    full: 'Settlements',   icon: CheckCircle2 },
-    { id: 'notifications',  label: 'Alerts',    full: 'Notifications', icon: Bell },
-    { id: 'subscriptions',  label: 'Plans',     full: 'Subscriptions', icon: CreditCard },
-    { id: 'trials',         label: 'Trials',    full: 'Trials & Billing', icon: Zap },
-    { id: 'organisations',  label: 'Orgs',      full: 'Organisations', icon: Building2 },
+    { id: 'overview',       label: 'Overview',  full: 'Overview',             icon: LayoutGrid },
+    { id: 'users',          label: 'Users',     full: 'Users',                icon: Users },
+    { id: 'groups',         label: 'Groups',    full: 'Groups',               icon: Home },
+    { id: 'expenses',       label: 'Expenses',  full: 'Expenses',             icon: Receipt },
+    { id: 'settlements',    label: 'Settle',    full: 'Settlements',          icon: CheckCircle2 },
+    { id: 'notifications',  label: 'Alerts',    full: 'Notifications',        icon: Bell },
+    { id: 'subscriptions',  label: 'Plans',     full: 'Subscriptions',        icon: CreditCard },
+    { id: 'trials',         label: 'Trials',    full: 'Trials & Billing',     icon: Zap },
+    { id: 'organisations',  label: 'Orgs',      full: 'Organisations',        icon: Building2 },
+    { id: 'integrations',   label: 'Integr.',   full: 'Integration Services', icon: Sparkles },
   ]
 
   const loadTab = useCallback(async (tab) => {
@@ -2813,6 +3265,8 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
       } else if (tab === 'trials') {
         const [s, st] = await Promise.all([fetchAppSettings(), fetchTrialStats()])
         setTrialSettings(s); setTrialStats(st)
+      } else if (tab === 'integrations') {
+        setIntegrationSettings(await fetchAppSettings())
       } else if (tab === 'organisations') {
         const [orgs, u] = await Promise.all([adminListOrgs(), fetchAdminUsers()])
         setAdminOrgs(orgs); setUsers(u)
@@ -3750,6 +4204,11 @@ function AdminDashboard({ currentUser, onBack, onWipe }) {
               )}
             </div>
 
+          ) : activeTab === 'integrations' ? (
+            <IntegrationsTab
+              integrationSettings={integrationSettings}
+              onSaved={() => loadTab('integrations')}
+            />
           ) : null
         )}
         </div>

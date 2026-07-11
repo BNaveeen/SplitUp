@@ -1,5 +1,8 @@
+import csv
+import io
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -361,6 +364,10 @@ def update_app_settings(
         s.work_trial_active = req.work_trial_active
     if req.work_trial_days is not None:
         s.work_trial_days = max(1, req.work_trial_days)
+    if req.totp_enforcement is not None and req.totp_enforcement in ('disabled', 'optional', 'required'):
+        s.totp_enforcement = req.totp_enforcement
+    if req.email_provider is not None and req.email_provider in ('smtp', 'sendgrid', 'mailgun', 'ses'):
+        s.email_provider = req.email_provider
     s.updated_at = dt.utcnow()
     db.commit()
     db.refresh(s)
@@ -385,3 +392,126 @@ def get_trial_stats(
         "work_trial_days": s.work_trial_days,
         "work_claims_total": work_claims,
     }
+
+
+# ── CSV Export endpoints ───────────────────────────────────────────────────────
+
+def _csv_response(rows: list[list], headers: list[str], filename: str) -> StreamingResponse:
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(headers)
+    w.writerows(rows)
+    content = "﻿" + buf.getvalue()  # BOM for Excel UTF-8
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/admin/export/users")
+def export_users_csv(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    users = db.query(User).all()
+    rows = [
+        [
+            u.id, u.name, u.email,
+            "Yes" if u.is_admin else "No",
+            "Yes" if u.is_verified else "No",
+            u.org_role or "",
+            u.org_status or "",
+            u.organisation.name if u.organisation else "",
+            u.department.name if u.department else "",
+            u.job_title or "",
+            u.employee_id or "",
+        ]
+        for u in users
+    ]
+    return _csv_response(
+        rows,
+        ["id", "name", "email", "is_admin", "is_verified", "org_role", "org_status",
+         "organisation", "department", "job_title", "employee_id"],
+        "users.csv",
+    )
+
+
+@router.get("/admin/export/expenses")
+def export_expenses_csv(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    expenses = db.query(Expense).filter(Expense.status == "active").all()
+    rows = [
+        [
+            e.id, e.description, float(e.amount or 0),
+            e.currency or "GBP",
+            e.category or "",
+            e.date.strftime("%Y-%m-%d") if e.date else "",
+            e.created_at.strftime("%Y-%m-%d %H:%M") if e.created_at else "",
+            e.payer.name if e.payer else "",
+            e.group.name if e.group else "",
+            e.status,
+        ]
+        for e in expenses
+    ]
+    return _csv_response(
+        rows,
+        ["id", "description", "amount", "currency", "category", "date", "created_at",
+         "paid_by", "group", "status"],
+        "expenses.csv",
+    )
+
+
+@router.get("/admin/export/settlements")
+def export_settlements_csv(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    settlements = db.query(Settlement).all()
+    rows = [
+        [
+            s.id, s.payer.name if s.payer else "", s.payee.name if s.payee else "",
+            float(s.amount or 0), s.status,
+            s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "",
+            s.group.name if s.group else "",
+        ]
+        for s in settlements
+    ]
+    return _csv_response(
+        rows,
+        ["id", "from", "to", "amount", "status", "created_at", "group"],
+        "settlements.csv",
+    )
+
+
+# ── Integration utilities ──────────────────────────────────────────────────────
+
+class TestEmailRequest(BaseModel):
+    address: str
+
+
+@router.post("/admin/integrations/test-email")
+def send_test_email(
+    req: TestEmailRequest,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user_id, db)
+    from services.email import send_email
+    html = """
+    <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;
+                background:#0f172a;color:#e2e8f0;border-radius:16px">
+      <h2 style="color:#f59e0b;margin:0 0 12px">SplitUp — Test Email</h2>
+      <p style="margin:0 0 8px;color:#94a3b8">This is a test email from your SplitUp admin panel.</p>
+      <p style="margin:0;color:#64748b;font-size:12px">SMTP is configured and working correctly.</p>
+    </div>
+    """
+    ok = send_email(req.address, "SplitUp — Integration Test", html)
+    if not ok:
+        raise HTTPException(status_code=502, detail="SMTP send failed — check SMTP_USER and SMTP_PASS environment variables.")
+    return {"status": "sent", "to": req.address}

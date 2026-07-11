@@ -59,6 +59,9 @@ class AppSettings(Base):
     work_trial_active           = Column(Boolean, default=True)
     work_trial_days             = Column(Integer, default=14)
     updated_at                  = Column(DateTime, default=datetime.utcnow)
+    # Integration settings
+    totp_enforcement            = Column(String(20), default='disabled')   # disabled|optional|required
+    email_provider              = Column(String(20), default='smtp')        # smtp|sendgrid|mailgun|ses
 
 
 class Organisation(Base):

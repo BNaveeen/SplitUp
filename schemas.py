@@ -57,6 +57,8 @@ class AppSettingsResponse(BaseModel):
     personal_trial_days: int = 30
     work_trial_active: bool = True
     work_trial_days: int = 14
+    totp_enforcement: str = 'disabled'
+    email_provider: str = 'smtp'
 
     class Config:
         from_attributes = True
@@ -67,6 +69,8 @@ class AppSettingsUpdate(BaseModel):
     personal_trial_days: Optional[int] = None
     work_trial_active: Optional[bool] = None
     work_trial_days: Optional[int] = None
+    totp_enforcement: Optional[str] = None
+    email_provider: Optional[str] = None
 
 
 class TokenResponse(BaseModel):

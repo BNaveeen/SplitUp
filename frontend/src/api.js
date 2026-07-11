@@ -461,3 +461,26 @@ export const fetchTrialStats = () => apiFetch('/admin/trial-stats')
 
 // ── Trial info (public) ───────────────────────────────────────────────────────
 export const fetchTrialInfo = () => apiFetch('/trial-info')
+
+// ── Integrations (admin) ─────────────────────────────────────────────────────
+export const adminSendTestEmail = (address) =>
+  apiFetch('/admin/integrations/test-email', { method: 'POST', body: JSON.stringify({ address }) })
+
+export const adminExportCSV = async (type) => {
+  const token = getToken()
+  const base  = isLocal ? '' : PROD_BACKENDS[0]
+  const prefix = isLocal ? '/api' : ''
+  const res = await fetch(`${base}${prefix}/admin/export/${type}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+  const blob = await res.blob()
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `${type}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

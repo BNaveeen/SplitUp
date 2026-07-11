@@ -198,6 +198,9 @@ async def startup_event():
         f"ALTER TABLE users ADD COLUMN trial_claimed_at {ts_type}",
         # Org work-trial
         f"ALTER TABLE organisations ADD COLUMN work_trial_claimed_at {ts_type}",
+        # Integration settings on AppSettings
+        "ALTER TABLE app_settings ADD COLUMN totp_enforcement TEXT DEFAULT 'disabled'",
+        "ALTER TABLE app_settings ADD COLUMN email_provider TEXT DEFAULT 'smtp'",
     ]:
         mig_db = SessionLocal()
         try:
