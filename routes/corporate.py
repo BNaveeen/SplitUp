@@ -460,12 +460,22 @@ def get_my_org(
     dept = db.query(Department).filter(Department.id == user.department_id).first() if user.department_id else None
     mgr  = db.query(User).filter(User.id == user.manager_id).first() if user.manager_id else None
 
-    teammates = db.query(User).filter(
+    # Filter to org-domain users only (exclude personal accounts linked via interlink)
+    org_domain = (org.domain or '').lower().lstrip('@')
+
+    def _is_org_email(u):
+        if not org_domain:
+            return True
+        return (u.email.split('@')[-1].lower() if '@' in u.email else '') == org_domain
+
+    all_teammates = db.query(User).filter(
         User.organisation_id == user.organisation_id,
         User.id != uid,
     ).all()
+    teammates = [t for t in all_teammates if _is_org_email(t)]
 
-    direct_reports = db.query(User).filter(User.manager_id == uid).all()
+    all_reports = db.query(User).filter(User.manager_id == uid).all()
+    direct_reports = [r for r in all_reports if _is_org_email(r)]
 
     return {
         "organisation": {"id": org.id, "name": org.name, "domain": org.domain},
